@@ -17,8 +17,11 @@ import com.dat3m.dartagnan.program.event.Event;
 import com.dat3m.dartagnan.program.event.EventFactory;
 import com.dat3m.dartagnan.program.event.Tag;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXAtomOp;
+import com.dat3m.dartagnan.program.event.arch.ptx.PTXMbarrierOp;
+import com.dat3m.dartagnan.program.event.arch.ptx.PTXMbarrierState;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXRedOp;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXWrappingOp;
+import com.dat3m.dartagnan.program.event.core.GenericVisibleEvent;
 import com.dat3m.dartagnan.program.event.core.InstructionBoundary;
 import com.dat3m.dartagnan.program.event.core.Label;
 import com.dat3m.dartagnan.program.memory.MemoryObject;
@@ -44,6 +47,8 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     private int threadCount = 0;
     // Number of barrier instructions of each kind executed so far by each thread (thread -> kind -> count)
     private final Map<Integer, Map<String, Integer>> barrierCounts = new HashMap<>();
+    // Number of mbarrier waits parsed so far (for unique label and register names)
+    private int waitCount = 0;
     // Ids of the clusters of threads placed without one
     private static final int IMPLICIT_CLUSTER = 1_000_000;
 
@@ -116,6 +121,18 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     }
 
     @Override
+    public Object visitVariableDeclaratorMbarrier(VariableDeclaratorMbarrierContext ctx) {
+        String name = ctx.location().getText();
+        MemoryObject object = programBuilder.getOrNewVirtualMemoryObject(name);
+        long state = ctx.constant() == null ? 0 : PTXMbarrierState.initial(Long.parseLong(ctx.constant().getText()));
+        object.setInitialValue(0, expressions.makeValue(state, archType));
+        if (ctx.ctaID() != null) {
+            spaces.declareShared(name, ctx.ctaID().id);
+        }
+        return null;
+    }
+
+    @Override
     public Object visitVariableDeclaratorRegister(VariableDeclaratorRegisterContext ctx) {
         String name = registerName(ctx.register(), ctx.index());
         programBuilder.initRegEqConst(ctx.threadId().id, name,
@@ -182,10 +199,14 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
                     continue;
                 }
                 PTXQualifiers q = PTXQualifiers.parse(instruction.Mnemonic().getText());
-                if (!Set.of("ld", "ldu", "st", "atom", "red").contains(q.getName())) {
+                if (!Set.of("ld", "ldu", "st", "atom", "red", "mbarrier").contains(q.getName())) {
                     continue;
                 }
                 String space = q.takeOne(SPACES);
+                if (q.getName().equals("mbarrier")) {
+                    // mbarrier objects are in shared memory
+                    space = "shared";
+                }
                 for (OperandContext operand : instruction.operand()) {
                     if (operand.location() != null) {
                         spaces.observe(operand.location().getText(), space, i);
@@ -233,6 +254,12 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             return append(List.of(load), ctx);
         }
         PTXQualifiers qualifiers = PTXQualifiers.parse(ctx.Mnemonic().getText());
+        if (qualifiers.getName().equals("mbarrier") && qualifiers.takeFirst("test_wait")) {
+            return append(parseMbarrierWait(qualifiers, operands), ctx, false);
+        }
+        if (qualifiers.getName().equals("mbarrier") && qualifiers.takeFirst("try_wait")) {
+            return append(parseMbarrierWait(qualifiers, operands), ctx, false);
+        }
         List<Event> events = switch (qualifiers.getName()) {
             case "ld", "ldu", "tld", "suld", "cold" -> parseLoad(qualifiers, operands);
             case "st", "sust" -> parseStore(qualifiers, operands);
@@ -242,6 +269,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             case "bar", "barrier" -> parseBarrier(qualifiers, operands);
             case "prefetch", "prefetchu", "applypriority" -> parseCacheControl(qualifiers, operands);
             case "createpolicy" -> parseCreatePolicy(qualifiers, operands);
+            case "mbarrier" -> parseMbarrier(qualifiers, operands);
             case "cp" -> parseCopy(qualifiers, operands);
             default -> throw new ParsingException("Unsupported instruction " + qualifiers.getMnemonic());
         };
@@ -629,6 +657,130 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     }
 
     // ----------------------------------------------------------------------------------------------------------------
+    // mbarrier objects
+
+    // mbarrier.init b, count; mbarrier.inval b; mbarrier.arrive{.expect_tx}{.sem}{.scope}{.space} {r,} b{, count};
+    // mbarrier.arrive_drop ...; mbarrier.expect_tx b, txCount; mbarrier.complete_tx b, txCount.
+    private List<Event> parseMbarrier(PTXQualifiers q, List<OperandContext> operands) {
+        final String operation = Set.of("init", "inval", "arrive", "arrive_drop", "expect_tx", "complete_tx").stream()
+                .filter(q::takeFirst).findFirst().orElse(null);
+        if (operation == null) {
+            throw new ParsingException("Unsupported instruction " + q.getMnemonic());
+        }
+        final String space = q.takeOne(SPACES);
+        q.take("b64");
+        if (operation.equals("init") || operation.equals("inval")) {
+            q.checkConsumed();
+            checkOperandCount(q, operands, operation.equals("init") ? 2 : 1);
+            final Slot slot = parseMbarrierSlot(q, operands.get(0), space, true);
+            final Expression state = operation.equals("init")
+                    ? PTXMbarrierState.initial(parseSingleValue(q, operands.get(1)), archType)
+                    : expressions.makeZero(archType);
+            final Event store = EventFactory.PTX.newStore(slot.address(), state, Tag.PTX.WEAK);
+            store.addTags(Tag.PTX.GEN);
+            if (operation.equals("init")) {
+                store.addTags(Tag.PTX.MBAR_INIT);
+            }
+            slot.addFootprint(store);
+            return List.of(store);
+        }
+        final boolean expectTx = operation.startsWith("arrive") && q.take("expect_tx");
+        q.take("noComplete");
+        final boolean arrive = operation.startsWith("arrive");
+        final String sem = q.takeOne(arrive ? Set.of("release", "relaxed") : Set.of("relaxed"));
+        final String scope = q.takeOne(Set.of("cta", "cluster"));
+        q.checkConsumed();
+        // An arrive may name the register that receives the state token
+        final boolean hasToken = arrive && !operands.isEmpty() && operands.get(0).register() != null;
+        final List<OperandContext> rest = hasToken ? operands.subList(1, operands.size()) : operands;
+        if (rest.isEmpty() || rest.size() > 2 || (!arrive || expectTx) && rest.size() != 2) {
+            throw q.error("Unexpected operands");
+        }
+        final Slot slot = parseMbarrierSlot(q, rest.get(0), space, false);
+        final Expression one = expressions.makeOne(archType);
+        final Expression zero = expressions.makeZero(archType);
+        final Expression amount = rest.size() > 1 ? parseSingleValue(q, rest.get(1)) : one;
+        final PTXMbarrierOp.Kind kind = switch (operation) {
+            case "arrive" -> PTXMbarrierOp.Kind.ARRIVE;
+            case "arrive_drop" -> PTXMbarrierOp.Kind.ARRIVE_DROP;
+            case "expect_tx" -> PTXMbarrierOp.Kind.EXPECT_TX;
+            default -> PTXMbarrierOp.Kind.COMPLETE_TX;
+        };
+        final Expression count = arrive ? (expectTx ? one : amount) : zero;
+        final Expression txCount = (expectTx || !arrive) ? amount : zero;
+        final Register result = hasToken ? parseTargetRegisters(q, operands.get(0), 1).get(0)
+                : programBuilder.getOrNewRegister(mainThread, "__mbarrier_token", archType);
+        final PTXMbarrierOp op = new PTXMbarrierOp(result, slot.address(), kind, count, txCount,
+                parseMo(defaultIfNull(sem, arrive ? "release" : "relaxed")));
+        op.addTags(Tag.PTX.GEN, parseScope(defaultIfNull(scope, "cta")));
+        slot.addFootprint(op);
+        return List.of(op);
+    }
+
+    // mbarrier.test_wait{.parity}{.sem}{.scope}{.space} r, b, p and mbarrier.try_wait ...: r = 1 iff the phase given by
+    // the parity p (or by the state token p) completed. The wait is an acquire only when it returns True: it reads the
+    // state with .acquire and finds the phase complete, or reads it with .relaxed and finds it incomplete.
+    private List<Event> parseMbarrierWait(PTXQualifiers q, List<OperandContext> operands) {
+        final boolean parity = q.take("parity");
+        final String sem = defaultIfNull(q.takeOne(Set.of("acquire", "relaxed")), "acquire");
+        final String scope = parseScope(defaultIfNull(q.takeOne(Set.of("cta", "cluster")), "cta"));
+        final String space = q.takeOne(SPACES);
+        q.take("b64");
+        q.checkConsumed();
+        if (operands.size() != 3 && operands.size() != 4) {
+            throw q.error("Expected a result register, the mbarrier, a parity or state token and an optional time hint");
+        }
+        final Register result = parseTargetRegisters(q, operands.get(0), 1).get(0);
+        final Slot slot = parseMbarrierSlot(q, operands.get(1), space, true);
+        final Expression phase = parseSingleValue(q, operands.get(2));
+        final int id = waitCount++;
+        final Register state = programBuilder.getOrNewRegister(mainThread, "__mbarrier_state" + id, archType);
+        final Expression complete = parity ? PTXMbarrierState.parityComplete(state, phase)
+                : PTXMbarrierState.tokenComplete(state, phase);
+        final List<Event> events = new ArrayList<>();
+        final Label end = programBuilder.getOrCreateLabel(mainThread, "__mbarrier_wait_end" + id);
+        if (sem.equals("acquire")) {
+            final Label relaxed = programBuilder.getOrCreateLabel(mainThread, "__mbarrier_wait_relaxed" + id);
+            events.add(EventFactory.newJump(programBuilder.newConstant(types.getBooleanType()), relaxed));
+            events.add(newMbarrierRead(state, slot, Tag.PTX.ACQ, scope));
+            events.add(EventFactory.newAssume(complete));
+            events.add(EventFactory.newGoto(end));
+            events.add(relaxed);
+            events.add(newMbarrierRead(state, slot, Tag.PTX.RLX, scope));
+            events.add(EventFactory.newAssume(expressions.makeNot(complete)));
+        } else {
+            events.add(newMbarrierRead(state, slot, Tag.PTX.RLX, scope));
+        }
+        events.add(end);
+        events.add(EventFactory.newLocal(result,
+                expressions.makeITE(complete, expressions.makeOne(archType), expressions.makeZero(archType))));
+        final Label valid = programBuilder.getOrCreateLabel(mainThread, "__mbarrier_wait_valid" + id);
+        events.add(EventFactory.newJump(PTXMbarrierState.isValid(state), valid));
+        events.add(new GenericVisibleEvent("undefined_behaviour", Tag.PTX.UB));
+        events.add(valid);
+        return events;
+    }
+
+    private Event newMbarrierRead(Register state, Slot slot, String mo, String scope) {
+        final Event load = EventFactory.PTX.newLoad(state, slot.address(), mo);
+        load.addTags(Tag.PTX.GEN, scope);
+        slot.addFootprint(load);
+        return load;
+    }
+
+    // The mbarrier operand; init, inval and the waits only act on an object of the executing thread's CTA.
+    private Slot parseMbarrierSlot(PTXQualifiers q, OperandContext operand, String space, boolean local) {
+        final Slot slot = parseSingleSlot(q, operand, space, false);
+        if (!spaces.isShared(operand.getText())) {
+            throw q.error("An mbarrier object must be in shared memory");
+        }
+        if (local && !spaces.isInOwnCta(operand.getText(), mainThread)) {
+            throw q.error("This operation needs an mbarrier object in the shared memory of the executing CTA");
+        }
+        return new Slot(slot.address(), withFootprint(slot.tags(), Tag.PTX.MBAR));
+    }
+
+    // ----------------------------------------------------------------------------------------------------------------
     // Cache control: these instructions only move data between cache levels, they produce no memory event.
 
     private List<Event> parseCacheControl(PTXQualifiers q, List<OperandContext> operands) {
@@ -892,8 +1044,11 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
 
     // Appends the events of one instruction; several memory events are grouped as one instruction (si)
     private Object append(List<Event> events, ParserRuleContext ctx) {
+        return append(events, ctx, events.stream().filter(e -> e.hasTag(Tag.MEMORY)).count() > 1);
+    }
+
+    private Object append(List<Event> events, ParserRuleContext ctx, boolean group) {
         final int line = ctx.getStart().getLine();
-        final boolean group = events.stream().filter(e -> e.hasTag(Tag.MEMORY)).count() > 1;
         InstructionBoundary begin = null;
         if (group) {
             begin = EventFactory.newInstructionBegin();

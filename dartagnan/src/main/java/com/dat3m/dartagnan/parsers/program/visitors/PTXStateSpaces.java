@@ -102,6 +102,11 @@ final class PTXStateSpaces {
         return tags;
     }
 
+    // Whether the location is in the shared memory of the thread's own CTA
+    boolean isInOwnCta(String location, int thread) {
+        return spaces.get(location) == Space.SHARED && owners.get(location) == places.get(thread).cta();
+    }
+
     boolean isShared(String location) {
         return spaces.get(location) == Space.SHARED;
     }
