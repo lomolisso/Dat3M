@@ -1,0 +1,29 @@
+package com.dat3m.dartagnan.litmus;
+
+import com.dat3m.dartagnan.configuration.Arch;
+import com.dat3m.dartagnan.configuration.Property;
+import com.dat3m.dartagnan.verification.ResultStatus;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.nio.file.Path;
+import java.io.IOException;
+
+@RunWith(Parameterized.class)
+public class LitmusPTXv8_7LivenessTest extends AbstractLitmusTest {
+
+    public LitmusPTXv8_7LivenessTest(Path path, ResultStatus expected) {
+        super(Arch.PTX, path, expected);
+    }
+
+    @Parameterized.Parameters(name = "{index}: {0}, {1}")
+    public static Iterable<Object[]> data() throws IOException {
+        return buildLitmusTests("litmus/PTX/", "PTXv8_7-Liveness");
+    }
+
+    @Override
+    protected Property getTestedProperty() { return Property.TERMINATION; }
+
+    @Override
+    protected String getTargetWmmName() { return "ptx-v8.7"; }
+}
