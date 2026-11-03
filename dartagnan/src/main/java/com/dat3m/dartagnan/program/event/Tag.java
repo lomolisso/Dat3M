@@ -293,6 +293,11 @@ public final class Tag {
         public static final String ALIAS = "ALIAS";
         // Barrier Mode
         public static final String ARRIVE = "__ARRIVE";
+        // Operations on mbarrier objects, and the mbarrier.init ones among them
+        public static final String MBAR = "MBAR";
+        public static final String MBAR_INIT = "MBAR_INIT";
+        // An event executed only when the program has undefined behaviour
+        public static final String UB = "UB";
         // barrier.cluster.arrive and barrier.cluster.wait
         public static final String BAR_CLUSTER = "BAR_CLUSTER";
 

@@ -9,8 +9,12 @@ import com.dat3m.dartagnan.program.event.Tag;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXAtomCAS;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXAtomExch;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXAtomOp;
+import com.dat3m.dartagnan.program.event.arch.ptx.PTXMbarrierOp;
+import com.dat3m.dartagnan.program.event.arch.ptx.PTXMbarrierState;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXRedOp;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXWrappingOp;
+import com.dat3m.dartagnan.program.event.core.GenericVisibleEvent;
+import com.dat3m.dartagnan.program.event.core.Label;
 import com.dat3m.dartagnan.program.event.core.Load;
 import com.dat3m.dartagnan.program.event.core.RMWStore;
 
@@ -96,6 +100,34 @@ public class VisitorPTX extends VisitorBase {
         );
     }
 
+    // An operation on an mbarrier object is one atomic read-modify-write of its state (see PTXMbarrierState). The
+    // result register receives the phase before the operation; an invalid object is undefined behaviour.
+    @Override
+    public List<Event> visitPtxMbarrierOp(PTXMbarrierOp e) {
+        Register resultRegister = e.getResultRegister();
+        String mo = e.getMo();
+        Expression address = e.getAddress();
+        Register dummy = e.getFunction().newRegister(resultRegister.getType());
+        Expression state = PTXMbarrierState.next(dummy, e.getKind(), e.getOperand(), e.getTxCount());
+        Load load = newRMWLoadWithMo(dummy, address, Tag.PTX.loadMO(mo));
+        RMWStore store = newRMWStoreWithMo(load, address, state, Tag.PTX.storeMO(mo));
+        propagateTags(e, load);
+        propagateTags(e, store);
+        Label valid = newLabel("mbarrier_valid");
+        return eventSequence(
+                load,
+                store,
+                newJump(PTXMbarrierState.isValid(dummy), valid),
+                newUndefinedBehaviour(),
+                valid,
+                newLocal(resultRegister, PTXMbarrierState.phase(dummy))
+        );
+    }
+
+    private static Event newUndefinedBehaviour() {
+        return new GenericVisibleEvent("undefined_behaviour", Tag.PTX.UB);
+    }
+
     // atom and red semantics:
     // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#parallel-synchronization-and-communication-instructions-atom
     //   inc(r, s) = (r >= s) ? 0 : r+1;
@@ -119,7 +151,8 @@ public class VisitorPTX extends VisitorBase {
     private void propagateTags(Event source, Event target) {
         for (String tag : List.of(Tag.PTX.CTA, Tag.PTX.CLUSTER, Tag.PTX.GPU, Tag.PTX.SYS, Tag.PTX.GEN, Tag.PTX.TEX,
                 Tag.PTX.SUR, Tag.PTX.CON, Tag.PTX.ASYNC, Tag.PTX.TMAP, Tag.PTX.WHOLE, Tag.PTX.PART,
-                Tag.PTX.GLOBAL, Tag.PTX.SHARED, Tag.PTX.SHARED_CTA, Tag.PTX.LOCAL, Tag.PTX.CONST, Tag.PTX.PARAM)) {
+                Tag.PTX.GLOBAL, Tag.PTX.SHARED, Tag.PTX.SHARED_CTA, Tag.PTX.LOCAL, Tag.PTX.CONST, Tag.PTX.PARAM,
+                Tag.PTX.MBAR)) {
             if (source.hasTag(tag)) {
                 target.addTags(tag);
             }

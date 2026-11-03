@@ -16,6 +16,7 @@ variableDeclaratorList
 
 variableDeclarator
     :   variableDeclaratorLocation
+    |   variableDeclaratorMbarrier
     |   variableDeclaratorRegister
     |   variableDeclaratorRegisterLocation
     |   variableDeclaratorLocationLocation
@@ -24,6 +25,12 @@ variableDeclarator
 
 variableDeclaratorLocation
     :   location index? Equals constant (At CTA ctaID)?
+    ;
+
+// b=mbarrier(2): an mbarrier object initialized with an expected arrival count of 2 before the threads start;
+// b=mbarrier(): a location for an mbarrier object that a thread initializes
+variableDeclaratorMbarrier
+    :   location Equals Mbarrier LPar constant? RPar (At CTA ctaID)?
     ;
 
 variableDeclaratorRegister
@@ -206,6 +213,8 @@ MnemonicPart
     ;
 
 Load    :   'ld';
+
+Mbarrier    :   'mbarrier';
 
 CTA     :   'cta';
 CLUSTER :   'cluster';
