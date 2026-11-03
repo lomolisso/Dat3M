@@ -46,6 +46,8 @@ public class ProgramBuilder {
     private final Map<Integer, Function> id2FunctionsMap = new HashMap<>();
     private final Map<Integer, Map<String, Label>> fid2LabelsMap = new HashMap<>();
     private final Map<String, MemoryObject> locations = new HashMap<>();
+    // Size in bytes of the elements that litmus conditions address as x[k] (default: one byte)
+    private final Map<MemoryObject, Integer> elementSizes = new HashMap<>();
 
     private final Program program;
 
@@ -207,6 +209,14 @@ public class ProgramBuilder {
         return locations.get(name);
     }
 
+    public void setElementSize(MemoryObject object, int bytes) {
+        elementSizes.put(object, bytes);
+    }
+
+    public int getElementOffset(MemoryObject object, int index) {
+        return index * elementSizes.getOrDefault(object, 1);
+    }
+
     public MemoryObject getOrNewMemoryObject(String name, int size) {
         return getOrNewMemoryObject(name, size, Memory::allocate);
     }
@@ -312,7 +322,7 @@ public class ProgramBuilder {
     // GPU
     public void newScopedThread(Arch arch, String name, int id, int ...scopeIds) {
         ScopeHierarchy scopeHierarchy = switch (arch) {
-            case PTX -> ScopeHierarchy.ScopeHierarchyForPTX(scopeIds[0], scopeIds[1]);
+            case PTX -> ScopeHierarchy.ScopeHierarchyForPTX(scopeIds[0], scopeIds[1], scopeIds[2]);
             case VULKAN -> ScopeHierarchy.ScopeHierarchyForVulkan(scopeIds[0], scopeIds[1], scopeIds[2]);
             case OPENCL -> ScopeHierarchy.ScopeHierarchyForOpenCL(scopeIds[0], scopeIds[1], scopeIds[2]);
             default -> throw new UnsupportedOperationException("Unsupported architecture: " + arch);
@@ -363,7 +373,11 @@ public class ProgramBuilder {
     }
 
     public MemoryObject getOrNewVirtualMemoryObject(String name) {
-        return getOrNewMemoryObject(name, ARCH_SIZE, (m, s) -> m.allocateVirtual(s, true, null));
+        return getOrNewVirtualMemoryObject(name, ARCH_SIZE);
+    }
+
+    public MemoryObject getOrNewVirtualMemoryObject(String name, int size) {
+        return getOrNewMemoryObject(name, size, (m, s) -> m.allocateVirtual(s, true, null));
     }
 
     private MemoryObject getOrNewVirtualMemoryObject(String name, boolean generic, VirtualMemoryObject alias) {

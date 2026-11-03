@@ -29,6 +29,7 @@ assertionValue
     :   varName LBracket DigitSequence RBracket
     |   varName
     |   LBracket varName RBracket
+    |   threadId Colon varName LBracket DigitSequence RBracket
     |   threadId Colon varName
     |   constant
     ;

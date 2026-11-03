@@ -119,13 +119,15 @@ class VisitorLitmusAssertions extends LitmusAssertionsBaseVisitor<Expression> {
             return expressions.parseValue(constant.getText(), archType);
         }
         String name = ctx.varName().getText();
+        TerminalNode offset = ctx.DigitSequence();
         if (ctx.threadId() != null) {
-            return programBuilder.getOrErrorRegister(ctx.threadId().id, name);
+            // P0:r0[k] names the k-th part of a register that was loaded from several elements
+            return programBuilder.getOrErrorRegister(ctx.threadId().id,
+                    offset == null ? name : name + "[" + offset.getText() + "]");
         }
         MemoryObject base = programBuilder.getMemoryObject(name);
         checkState(base != null, "uninitialized location %s", name);
-        TerminalNode offset = ctx.DigitSequence();
-        int o = offset == null ? 0 : Integer.parseInt(offset.getText());
+        int o = offset == null ? 0 : programBuilder.getElementOffset(base, Integer.parseInt(offset.getText()));
         final IntegerType type = types.getIntegerType(Math.min(64, 8 * base.getKnownSize()));
         return right && offset == null ? base : new FinalMemoryValue(name, type, base, o);
     }

@@ -23,11 +23,11 @@ variableDeclarator
     ;
 
 variableDeclaratorLocation
-    :   location Equals constant
+    :   location index? Equals constant
     ;
 
 variableDeclaratorRegister
-    :   threadId Colon register Equals constant
+    :   threadId Colon register index? Equals constant
     ;
 
 variableDeclaratorRegisterLocation
@@ -71,7 +71,7 @@ threadScope
     ;
 
 scopeID
-    :   CTA ctaID Comma GPU gpuID
+    :   CTA ctaID (Comma CLUSTER clusterID)? Comma GPU gpuID
     ;
 
 instructionList
@@ -81,33 +81,38 @@ instructionList
 instructionRow
     :   instruction (Bar instruction)* Semi
     ;
+
 instruction
     :
-    |   storeInstruction
-    |   loadInstruction
-    |   fenceInstruction
-    |   atomInstruction
-    |   redInstruction
+    |   ptxInstruction
+    |   localInstruction
     |   branchCond
     |   jump
     |   label
     ;
 
-storeInstruction
-    :   store Period mo (Period scope)? location Comma value
+// A PTX instruction: the mnemonic with its qualifiers (e.g. ld.relaxed.cluster.global.b32), then its operands.
+// The qualifiers are interpreted by the visitor.
+ptxInstruction
+    :   Mnemonic (operand (Comma operand)*)?
+    |   Load register Comma operand
     ;
 
-loadInstruction
-    :   localValue
-    |   localAdd
+operand
+    :   register index?
+    |   location index?
+    |   constant (Colon constant)*
+    ;
+
+index
+    :   LBracket DigitSequence RBracket
+    ;
+
+localInstruction
+    :   localAdd
     |   localSub
     |   localMul
     |   localDiv
-    |   loadLocation
-    ;
-
-localValue
-    :   load register Comma value
     ;
 
 localAdd
@@ -126,69 +131,6 @@ localDiv
     :   Div register Comma value Comma value
     ;
 
-loadLocation
-    :   load Period mo (Period scope)? register Comma location
-    ;
-
-
-fenceInstruction
-    :   fencePhysic
-    |   fenceProxy
-    |   fenceAlias
-    |   barrier
-    ;
-
-fencePhysic
-    :   Fence Period mo Period scope
-    ;
-
-fenceProxy
-    :   Fence Period Proxy Period proxyType
-    ;
-
-fenceAlias
-    :   Fence Period Proxy Period Alias
-    ;
-
-barrier
-    :   Barrier Period CTA Period barrierMode constant (Comma barrierId (Comma barrierQuorum)?)?
-    ;
-
-barrierMode
-    :   Sync
-    |   Arrive
-    ;
-
-barrierId
-    : value
-    ;
-
-barrierQuorum
-    : value
-    ;
-
-atomInstruction
-    :   atomOp
-    |   atomCAS
-    |   atomExchange
-    ;
-
-atomOp
-    :   atom Period mo Period scope Period operation register Comma location Comma value
-    ;
-
-atomCAS
-    :   atom Period mo Period scope Period Cas register Comma location Comma value Comma value
-    ;
-
-atomExchange
-    :   atom Period mo Period scope Period Exch register Comma location Comma value
-    ;
-
-redInstruction
-    :   red Period mo Period scope Period operation location Comma value
-    ;
-
 branchCond
     :   cond value Comma value Comma Label
     ;
@@ -201,28 +143,12 @@ label
     :   Label Colon
     ;
 
-scope returns [String content]
-    :   CTA {$content = "CTA";}
-    |   GPU {$content = "GPU";}
-    |   SYS {$content = "SYS";}
-    ;
-
 location
     :   Identifier
     ;
 
 register
     :   Register
-    ;
-
-operation locals [IntBinaryOp op]
-    :   Add {$op = IntBinaryOp.ADD;}
-    |   Sub {$op = IntBinaryOp.SUB;}
-    |   Mul {$op = IntBinaryOp.MUL;}
-    |   Div {$op = IntBinaryOp.DIV;}
-    |   And {$op = IntBinaryOp.AND;}
-    |   Or {$op = IntBinaryOp.OR;}
-    |   Xor {$op = IntBinaryOp.XOR;}
     ;
 
 cond returns [IntCmpOp op]
@@ -235,12 +161,16 @@ cond returns [IntCmpOp op]
     ;
 
 assertionValue
-    :   location
-    |   threadId Colon register
+    :   location index?
+    |   threadId Colon register index?
     |   constant
     ;
 
 ctaID returns [int id]
+    :   t = DigitSequence {$id = Integer.parseInt($t.text);}
+    ;
+
+clusterID returns [int id]
     :   t = DigitSequence {$id = Integer.parseInt($t.text);}
     ;
 
@@ -251,37 +181,6 @@ gpuID returns [int id]
 value
     :   constant
     |   register
-    ;
-
-mo returns [String content]
-    :   Weak {$content = "WEAK";}
-    |   Relaxed {$content = "RLX";}
-    |   Acquire {$content = "ACQ";}
-    |   Release {$content = "REL";}
-    |   Acq_rel {$content = "ACQ_REL";}
-    |   Sc {$content = "SC";}
-    ;
-
-load returns [String loadProxy]
-    :   Load {$loadProxy = "GEN";}
-    |   TextureLoad {$loadProxy = "TEX";}
-    |   SurfaceLoad {$loadProxy = "SUR";}
-    |   ConstantLoad {$loadProxy = "CON";}
-    ;
-
-store returns [String storeProxy]
-    :   Store {$storeProxy = "GEN";}
-    |   Sustore {$storeProxy = "SUR";}
-    ;
-
-atom returns [String atomProxy]
-    :   Atom {$atomProxy = "GEN";}
-    |   SurfaceAtom {$atomProxy = "SUR";}
-    ;
-
-red returns [String redProxy]
-    :   Red {$redProxy = "GEN";}
-    |   SurfaceRed {$redProxy = "SUR";}
     ;
 
 Locations
@@ -296,55 +195,32 @@ Label
     :   'LC' DigitSequence
     ;
 
-Load            :   'ld';
-TextureLoad     :   'tld';
-SurfaceLoad     :   'suld';
-ConstantLoad    :   'cold';
+// An instruction name with at least one qualifier, e.g. fence.proxy.async::generic.release.gpu
+Mnemonic
+    :   [a-z] [a-z0-9_]* ('.' MnemonicPart ('::' MnemonicPart)*)+
+    ;
 
-Store           :   'st';
-Sustore         :   'sust';
+fragment
+MnemonicPart
+    :   [a-zA-Z0-9_]+
+    ;
 
-Atom            :   'atom';
-SurfaceAtom     :   'suatom';
-
-Red             :   'red';
-SurfaceRed      :   'sured';
-
-Fence   :   'fence';
-Barrier :   'bar';
-
-Sync    :   'sync';
-Arrive  :   'arrive';
+Load    :   'ld';
 
 CTA     :   'cta';
+CLUSTER :   'cluster';
 GPU     :   'gpu';
-SYS     :   'sys';
-
-Weak    :   'weak';
-Relaxed :   'relaxed';
-Acquire :   'acquire';
-Release :   'release';
-Acq_rel :   'acq_rel';
-Sc      :   'sc';
 
 Add     :   'add';
 Sub     :   'sub';
 Mul     :   'mul';
 Div     :   'div';
-And     :   'and';
-Or      :   'or';
-Xor     :   'xor';
 
-Cas     :   'cas';
-Exch    :   'exch';
-
-Proxy       :   'proxy';
 Generic     :   'generic';
 Constant    :   'constant';
 Surface     :   'surface';
 Texture     :   'texture';
 Aliases     :   'aliases';
-Alias       :   'alias';
 
 Beq    :   'beq';
 Bne    :   'bne';
