@@ -7,35 +7,11 @@ litmus/PTX/Kamui/kamui/ptx87/barrier-cluster/MP+barrier.cluster-relaxed+fence-re
 litmus/PTX/Kamui/kamui/ptx87/barrier-cluster/MP+barrier.cluster-relaxed+fence-restrict-cta.litmus
 
 // mbarrier
-litmus/PTX/Kamui/kamui/hand/MP+fence-rel+mbarrier-rel-acq.cta+same-cta.litmus
-litmus/PTX/Kamui/kamui/hand/MP+mbarrier-rel-acq+fence-acq.cta+same-cta.litmus
-litmus/PTX/Kamui/kamui/hand/MP+mbarrier-rel-acq-shared.cta+same-cta.litmus
-litmus/PTX/Kamui/kamui/hand/MP+mbarrier-rel-acq-try_wait.cta+same-cta.litmus
-litmus/PTX/Kamui/kamui/hand/MP+mbarrier-rel-acq.cta+same-cta.litmus
-litmus/PTX/Kamui/kamui/hand/MP+mbarrier-relaxed+fences.cta+same-cta.litmus
-litmus/PTX/Kamui/kamui/hand/MP+mbarrier-relaxed.cta+same-cta.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier-init/mbarrier-init+inval+use.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier-init/mbarrier-init+no-fence+cluster-barrier.litmus
 litmus/PTX/Kamui/kamui/ptx87/mbarrier-init/mbarrier-init+op-restrict+cluster-barrier.litmus
 litmus/PTX/Kamui/kamui/ptx87/mbarrier-init/mbarrier-init+op-restrict+data.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier-init/mbarrier-init+same-thread.litmus
 litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP+fence-restrict-cta+mbarrier-relaxed-remote.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP+mbarrier-expect-complete-tx.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP+mbarrier-remote-arrive+wait.cta.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP+mbarrier-remote-arrive.cluster.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP+mbarrier-remote-arrive.cta.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP+mbarrier-token.litmus
 litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP+mbarrier-try_wait-relaxed+fence-restrict+global.litmus
 litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP+mbarrier-try_wait-relaxed+fence-restrict.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP2+mbarrier-rel-acq.cta+fence-acq.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP2+mbarrier-rel-acq.cta.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP2+mbarrier-rel-relaxed.cta+release-side.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP2+mbarrier-rel-relaxed.cta.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/mbarrier-arrive-drop.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/mbarrier-expect-tx-blocks.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/mbarrier-parity-1.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/mbarrier-phase-incomplete.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/mbarrier-wait-false+no-sync.litmus
 
 // restricted fences
 litmus/PTX/Kamui/kamui/ptx87/restrict/MP+fence-restrict-both+producer-shared.litmus
