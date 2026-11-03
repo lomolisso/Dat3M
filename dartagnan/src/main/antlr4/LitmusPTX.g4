@@ -107,8 +107,14 @@ ptxInstruction
 
 operand
     :   register index?
+    |   multicastTargets
     |   location index?
     |   constant (Colon constant)*
+    ;
+
+// d0+d1: one destination per CTA of a multicast copy
+multicastTargets
+    :   location (Plus location)+
     ;
 
 index

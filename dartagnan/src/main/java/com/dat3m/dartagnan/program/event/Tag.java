@@ -304,8 +304,41 @@ public final class Tag {
         public static final String MBAR_INIT = "MBAR_INIT";
         // An event executed only when the program has undefined behaviour
         public static final String UB = "UB";
+        // Events of asynchronous operations (cp.async, cp.async.bulk, cp.reduce.async.bulk, st.async, red.async,
+        // the arrive-on of cp.async.mbarrier.arrive), the completion events (complete-tx of an asynchronous operation,
+        // cp.async.wait_group, cp.async.bulk.wait_group), the cp.async operations and the arrive-on that tracks them
+        public static final String AOP = "AOP";
+        public static final String COMPLETION = "COMPLETION";
+        public static final String CPASYNC = "CPASYNC";
+        public static final String CPASYNC_ARRIVE = "CPASYNC_ARRIVE";
+        // Number of async-groups per thread and kind that the model distinguishes
+        public static final int ASYNC_GROUPS = 8;
+        // Number of asynchronous operations per test; the events of the k-th one carry asyncOperation(k)
+        public static final int ASYNC_OPERATIONS = 16;
         // barrier.cluster.arrive and barrier.cluster.wait
         public static final String BAR_CLUSTER = "BAR_CLUSTER";
+
+        // Events of the operations of the k-th async-group of their thread (kind "AG": cp.async, "BAG": bulk), and
+        // waits that complete that group ("WAIT_" + group; "WAITR_" + group: only the reads of a bulk group)
+        public static String asyncGroup(String kind, int k) {
+            return kind + k;
+        }
+
+        public static String asyncOperation(int k) {
+            return AOP + k;
+        }
+
+        public static List<String> getAsyncTags() {
+            final List<String> tags = new java.util.ArrayList<>(List.of(AOP, COMPLETION, CPASYNC, CPASYNC_ARRIVE));
+            for (int k = 0; k < ASYNC_OPERATIONS; k++) {
+                tags.add(asyncOperation(k));
+            }
+            for (int k = 0; k < ASYNC_GROUPS; k++) {
+                tags.add(asyncGroup("AG", k));
+                tags.add(asyncGroup("BAG", k));
+            }
+            return tags;
+        }
 
         public static String loadMO(String mo) {
             return switch (mo) {

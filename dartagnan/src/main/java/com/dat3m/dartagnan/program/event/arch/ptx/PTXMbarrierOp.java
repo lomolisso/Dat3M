@@ -13,7 +13,7 @@ import java.util.Set;
     An operation that changes the state of an mbarrier object (see PTXMbarrierState): an arrive-on (arrive), an
     arrive-on that also decrements the expected count (arrive_drop), an expect-tx or a complete-tx. The operand is
     the count of the arrive-on or of the complete-tx; txCount is the expectCount of an expect-tx (zero if there is
-    none). The result register receives the phase before the operation (the state token of mbarrier.arrive).
+    none). The result register receives the state before the operation.
  */
 public class PTXMbarrierOp extends RMWOpResultBase {
 

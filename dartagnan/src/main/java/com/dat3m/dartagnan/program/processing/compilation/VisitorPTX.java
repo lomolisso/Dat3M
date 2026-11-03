@@ -13,8 +13,6 @@ import com.dat3m.dartagnan.program.event.arch.ptx.PTXMbarrierOp;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXMbarrierState;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXRedOp;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXWrappingOp;
-import com.dat3m.dartagnan.program.event.core.GenericVisibleEvent;
-import com.dat3m.dartagnan.program.event.core.Label;
 import com.dat3m.dartagnan.program.event.core.Load;
 import com.dat3m.dartagnan.program.event.core.RMWStore;
 
@@ -100,8 +98,8 @@ public class VisitorPTX extends VisitorBase {
         );
     }
 
-    // An operation on an mbarrier object is one atomic read-modify-write of its state (see PTXMbarrierState). The
-    // result register receives the phase before the operation; an invalid object is undefined behaviour.
+    // An operation on an mbarrier object is one atomic read-modify-write of its state (see PTXMbarrierState); the
+    // result register receives the state before the operation.
     @Override
     public List<Event> visitPtxMbarrierOp(PTXMbarrierOp e) {
         Register resultRegister = e.getResultRegister();
@@ -113,19 +111,11 @@ public class VisitorPTX extends VisitorBase {
         RMWStore store = newRMWStoreWithMo(load, address, state, Tag.PTX.storeMO(mo));
         propagateTags(e, load);
         propagateTags(e, store);
-        Label valid = newLabel("mbarrier_valid");
         return eventSequence(
                 load,
                 store,
-                newJump(PTXMbarrierState.isValid(dummy), valid),
-                newUndefinedBehaviour(),
-                valid,
-                newLocal(resultRegister, PTXMbarrierState.phase(dummy))
+                newLocal(resultRegister, dummy)
         );
-    }
-
-    private static Event newUndefinedBehaviour() {
-        return new GenericVisibleEvent("undefined_behaviour", Tag.PTX.UB);
     }
 
     // atom and red semantics:
@@ -153,6 +143,11 @@ public class VisitorPTX extends VisitorBase {
                 Tag.PTX.SUR, Tag.PTX.CON, Tag.PTX.ASYNC, Tag.PTX.TMAP, Tag.PTX.WHOLE, Tag.PTX.PART,
                 Tag.PTX.GLOBAL, Tag.PTX.SHARED, Tag.PTX.SHARED_CTA, Tag.PTX.LOCAL, Tag.PTX.CONST, Tag.PTX.PARAM,
                 Tag.PTX.MBAR)) {
+            if (source.hasTag(tag)) {
+                target.addTags(tag);
+            }
+        }
+        for (String tag : Tag.PTX.getAsyncTags()) {
             if (source.hasTag(tag)) {
                 target.addTags(tag);
             }
