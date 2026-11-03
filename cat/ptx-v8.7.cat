@@ -51,11 +51,16 @@ let completion = ([AOP & AG0]; po0; [WAIT_AG0]) | ([AOP & BAG0]; po0; [WAIT_BAG0
                  | ([AOP & BAG6 & R & ~RMW]; po0; [WAITR_BAG6])
                  | ([AOP & AG7]; po0; [WAIT_AG7]) | ([AOP & BAG7]; po0; [WAIT_BAG7])
                  | ([AOP & BAG7 & R & ~RMW]; po0; [WAITR_BAG7])
+                 | ([AOP & WG0]; po0; [WAIT_WG0]) | ([AOP & WG1]; po0; [WAIT_WG1])
+                 | ([AOP & WG2]; po0; [WAIT_WG2]) | ([AOP & WG3]; po0; [WAIT_WG3])
+                 | ([AOP & WG4]; po0; [WAIT_WG4]) | ([AOP & WG5]; po0; [WAIT_WG5])
+                 | ([AOP & WG6]; po0; [WAIT_WG6]) | ([AOP & WG7]; po0; [WAIT_WG7])
 let cpasync-arrive-order = [AOP & CPASYNC]; po0; [CPASYNC_ARRIVE]
 let po = ((po0 \ ((AOP * _) | (_ * AOP))) | async-internal | completion | cpasync-arrive-order)+
 // An asynchronous operation is ordered after the prior instructions of its thread (6886), but this order does not
 // extend through it to other operations (6899-6901): it is only used to reach the operation's own accesses.
-let issue = [~AOP]; po0; [AOP]
+// wgmma.mma_async is not ordered after prior instructions (6886-6887) except through a fence (32614-32618, M48)
+let issue = ([~AOP]; po0; [AOP & ~WGMMA]) | ([F]; po0; [AOP & WGMMA])
 
 // Coherence order is a partial transitive order (8.9.6); recompute fr from it
 let co = co+
@@ -108,8 +113,10 @@ let cluster-arrive-wait = [BAR_CLUSTER & (REL | RLX)]; syncbar; [BAR_CLUSTER & A
 let sync-cluster-barrier = ([REL]; cluster-arrive-wait)
                          | ((([release-fence]; po; [BAR_CLUSTER & RLX]); cluster-arrive-wait) & sr)
 let sync-barrier = sync-cta-barrier | sync-cluster-barrier
+// griddepcontrol.wait waits for the prerequisite grid and its memory operations (23827-23829, M49)
+let sync-grid = (GRID0 * GRIDWAIT1) | (GRID1 * GRIDWAIT2) | (GRID2 * GRIDWAIT3)
 // Fence-SC order (8.9.3, M4)
-let sync-any = sync-pattern | sync_fence | sync-barrier
+let sync-any = sync-pattern | sync_fence | sync-barrier | sync-grid
 
 (* 8.9.5 Base causality order, with restricted fences (22621-22630, M36) *)
 // A restricted release fence (.sync_restrict::shared::cta, .mbarrier_init) orders only some of the operations
@@ -170,9 +177,10 @@ let conflict = (W * M) | (M * W)
 let mixed-size-race = (conflict & partial-overlap) \ (cause | cause^-1)
 // Other undefined behaviour executes a UB event (e.g. an operation on an invalid mbarrier object). It is only
 // reported: whether it happens depends on the values read, so it must not relax the axioms that constrain them (M35).
-let ub = (_ * _); mixed-size-race; (_ * _)
+// Undefined behaviour that does not depend on values (UB_STATIC, e.g. a missing wgmma.fence) relaxes the axioms too
+let ub = (_ * _); (mixed-size-race | [UB_STATIC]); (_ * _)
 flag ~empty mixed-size-race as mixed-size-data-race
-flag ~empty [UB] as undefined-behaviour
+flag ~empty ([UB] | [UB_STATIC]) as undefined-behaviour
 
 (******************************)
 (*  PTX Memory Model Axioms   *)

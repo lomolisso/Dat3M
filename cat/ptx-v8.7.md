@@ -23,6 +23,13 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
 - granules: a location declared `x[0]=0; x[1]=0;` has two granules; `x` names both, `x[1]` one. A store of one
   value writes it to every granule, `1:2` gives one value per granule; a load of `x` into `r0` fills `r0[0]`,
   `r0[1]`. Conditions may name `x[1]` and `P1:r0[1]` (M14).
+- state spaces: `s=0 @cta 1` puts `s` in the shared memory of CTA 1; `.global`, `.shared{::cta,::cluster}`, `.local`,
+  `.const`, `.param` on accesses (M22-M24);
+- mbarrier objects: `b=mbarrier(2)` (initialized), `b=mbarrier()` (uninitialized); transaction counts count copied
+  locations; `mbarrier.arrive [r,] b` returns the phase as state token (M32-M35);
+- asynchronous operations, with multicast destinations written `d0+d1` and mbarriers `b0+b1`; a tensor copy names
+  its tensor map and a register for the value read from it (M39-M46);
+- `m=multimem(x, y)` (M47); `wgmma.mma_async r, a, c` (M48); placement `,grid N` (M49).
 
 ## Entries
 
@@ -720,6 +727,72 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
 - **Choice.** Not detected: such programs are decided by the axioms (the copy may then read or write either value).
 - **Tests.** `Kamui/kamui/ptx87/cp-async/cp.async+no-wait` reads the destination before completion (allowed either
   way).
+
+### M47. multimem operations
+
+- **Question.** How are the per-location operations of `multimem.st`, `multimem.ld_reduce` and `multimem.red` ordered,
+  and what are their defaults (gap 18)?
+- **Manual.** 6561-6565: "A multimem address is a virtual address which points to multiple distinct memory
+  locations across devices. Only multimem.* operations are valid on multimem addresses." 17405-17420:
+  `multimem.ld_reduce` loads "from all of the multiple memory locations" and reduces; `multimem.st` "performs a store
+  operation of the input operand b to all the memory locations"; `multimem.red` "performs a reduction operation on
+  all the memory locations". 17506-17512: `ld_reduce` and `st` default to `.weak`, `red` to `.relaxed` and `.sys`.
+- **Choice.** One operation per location, with the instruction's semantics and scope, in no order among themselves
+  (like the elements of a vector, M18): a release `multimem.st` covers the operations before the instruction but no
+  element covers its siblings. Any other access to the multimem name is rejected (6564-6565).
+- **Tests.** `Kamui/kamui/ptx87/multimem/*` (`multimem.st+free-order` allowed, the others forbidden).
+
+### M48. wgmma
+
+- **Question.** `wgmma.mma_async` reads shared-memory matrices in the async proxy and is not ordered after prior
+  instructions. How do prior generic writes reach it, and what does `wgmma.fence` do?
+- **Manual.** 6886-6887: async operations are ordered after prior instructions "(except in the case of
+  wgmma.mma_async)". 31548-31556: performed in the async proxy, "followed by an implicit generic-async proxy fence".
+  33443-33444: "An async proxy fence must be used to establish an ordering between prior writes to shared memory
+  matrices and subsequent reads of the same matrices in a wgmma.mma_async instruction." 33416-33434: `wgmma.fence`
+  orders register accesses and "must be issued ... Before the first wgmma.mma_async operation in a warpgroup".
+  33526-33540 (`wgmma.wait_group`).
+- **Choice.** In the dialect `wgmma.mma_async r, a, c` reads the shared locations `a` and `c` in the async proxy (`r`
+  gets the value of `a`). It is ordered only after prior fences, so a prior generic write reaches it only through
+  `fence.proxy.async`. `wgmma.commit_group`/`wait_group` form wgmma async-groups (M40). A `wgmma.mma_async` without a
+  prior `wgmma.fence` in its thread is undefined behaviour that does not depend on values, so the axioms do not
+  apply to such an execution (M51).
+- **Tests.** `Kamui/kamui/ptx87/wgmma/*` (`wgmma+fence.proxy.async+wgmma.fence` forbidden, `wgmma+no-proxy-fence`
+  and `wgmma+no-wgmma.fence` allowed).
+
+### M49. griddepcontrol
+
+- **Question.** `griddepcontrol.wait` is outside 8.9.4 (gap 13).
+- **Manual.** 23827-23829: ".wait modifier causes the executing thread to wait until all prerequisite grids in flight
+  have completed and all the memory operations from the prerequisite grids are performed and made visible to the
+  current grid." 23820-23825: `.launch_dependents` only lets dependents be scheduled. 6949-6950: the end of all threads
+  of a kernel synchronizes with the end of the kernel.
+- **Choice.** In the dialect `grid N` places a thread in grid N, which depends on grid N-1. Every operation of grid
+  N-1 synchronizes with each `griddepcontrol.wait` of grid N; `launch_dependents` has no memory effect, so without a
+  wait the grids run concurrently. Up to 4 grids.
+- **Tests.** `Kamui/kamui/ptx87/griddep/MP+griddepcontrol.wait` (forbidden), `MP+griddepcontrol+no-wait` (allowed).
+
+### M50. ldmatrix, stmatrix, tensormap operations, discard
+
+- **Manual.** 29869 and 30063: `ldmatrix` and `stmatrix` are "treated as a weak memory operation". 20511-20512:
+  "tensormap.replace is treated as a weak memory operation, on the entire 1024-bit opaque tensor-map object".
+  25001-25006: `tensormap.cp_fenceproxy` copies from shared to global memory "in the generic proxy" and "Establishes
+  a uni-directional proxy release pattern on the ordering from the copy operation to the subsequent access performed
+  in the tensormap proxy". 17688-17691: after `discard` the data "has undetermined value".
+- **Choice.** `ldmatrix`/`stmatrix`: weak shared loads/stores of one location per thread (dialect). `tensormap.replace`:
+  a weak generic write of the tensor map (one location). `tensormap.cp_fenceproxy`: a weak generic copy followed, in
+  program order, by a release tensormap proxy fence (M26). `discard`: a weak write of an arbitrary value.
+- **Tests.** `Kamui/kamui/ptx87/ld-st/MP+ldmatrix+bar.sync` (forbidden), `Kamui/kamui/ptx87/tensormap/*`,
+  `Kamui/kamui/ptx87/ld-st/CoWR+discard` (allowed: the value is arbitrary, so 7 can be read).
+
+### M51. Undefined behaviour that does not depend on values
+
+- **Question.** M35 keeps the axioms for undefined behaviour detected from values read. What about undefined
+  behaviour visible in the program text?
+- **Choice.** A missing `wgmma.fence` (M48) is undefined behaviour of every execution that reaches the
+  `wgmma.mma_async`; it cannot justify itself, so the axioms do not apply to such executions (as for mixed-size data
+  races, M16), and reads still return written values. It is also reported by the `undefined-behaviour` flag.
+- **Tests.** `Kamui/kamui/ptx87/wgmma/wgmma+no-wgmma.fence` (allowed; forbidden if the axioms applied).
 
 ## Tests Dartagnan cannot decide
 
