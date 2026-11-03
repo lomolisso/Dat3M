@@ -302,8 +302,14 @@ public final class Tag {
         // Operations on mbarrier objects, and the mbarrier.init ones among them
         public static final String MBAR = "MBAR";
         public static final String MBAR_INIT = "MBAR_INIT";
-        // An event executed only when the program has undefined behaviour
+        // An event executed only when the program has undefined behaviour; UB_STATIC: undefined behaviour that does
+        // not depend on the values read (e.g. a missing wgmma.fence)
         public static final String UB = "UB";
+        public static final String UB_STATIC = "UB_STATIC";
+        // Events of wgmma.mma_async
+        public static final String WGMMA = "WGMMA";
+        // Number of grids a test may use; events of grid k carry grid(k), griddepcontrol.wait in grid k gridWait(k)
+        public static final int GRIDS = 4;
         // Events of asynchronous operations (cp.async, cp.async.bulk, cp.reduce.async.bulk, st.async, red.async,
         // the arrive-on of cp.async.mbarrier.arrive), the completion events (complete-tx of an asynchronous operation,
         // cp.async.wait_group, cp.async.bulk.wait_group), the cp.async operations and the arrive-on that tracks them
@@ -324,18 +330,30 @@ public final class Tag {
             return kind + k;
         }
 
+        public static String grid(int k) {
+            return "GRID" + k;
+        }
+
+        public static String gridWait(int k) {
+            return "GRIDWAIT" + k;
+        }
+
         public static String asyncOperation(int k) {
             return AOP + k;
         }
 
         public static List<String> getAsyncTags() {
-            final List<String> tags = new java.util.ArrayList<>(List.of(AOP, COMPLETION, CPASYNC, CPASYNC_ARRIVE));
+            final List<String> tags = new java.util.ArrayList<>(List.of(AOP, COMPLETION, CPASYNC, CPASYNC_ARRIVE, WGMMA));
+            for (int k = 0; k < GRIDS; k++) {
+                tags.add(grid(k));
+            }
             for (int k = 0; k < ASYNC_OPERATIONS; k++) {
                 tags.add(asyncOperation(k));
             }
             for (int k = 0; k < ASYNC_GROUPS; k++) {
                 tags.add(asyncGroup("AG", k));
                 tags.add(asyncGroup("BAG", k));
+                tags.add(asyncGroup("WG", k));
             }
             return tags;
         }

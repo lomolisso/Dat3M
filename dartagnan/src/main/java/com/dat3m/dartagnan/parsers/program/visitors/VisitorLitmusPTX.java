@@ -52,6 +52,12 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     // Number of fresh registers and of asynchronous operations created so far
     private int asyncCount = 0;
     private int asyncOperationCount = 0;
+    // The locations of each multimem address
+    private final Map<String, List<String>> multimem = new HashMap<>();
+    // Grid of each thread (only when the test places threads in grids)
+    private final Map<Integer, Integer> grids = new HashMap<>();
+    // Threads that executed wgmma.fence
+    private final Set<Integer> wgmmaFenced = new java.util.HashSet<>();
     // Committed async-groups of each thread, per kind ("AG": cp.async, "BAG": bulk operations)
     private final Map<Integer, Map<String, Integer>> committedGroups = new HashMap<>();
     // Ids of the clusters of threads placed without one
@@ -138,6 +144,14 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     }
 
     @Override
+    public Object visitVariableDeclaratorMultimem(VariableDeclaratorMultimemContext ctx) {
+        final List<String> targets = ctx.location().subList(1, ctx.location().size()).stream()
+                .map(LocationContext::getText).toList();
+        multimem.put(ctx.location(0).getText(), targets);
+        return null;
+    }
+
+    @Override
     public Object visitVariableDeclaratorRegister(VariableDeclaratorRegisterContext ctx) {
         String name = registerName(ctx.register(), ctx.index());
         programBuilder.initRegEqConst(ctx.threadId().id, name,
@@ -189,6 +203,12 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             // NB: the order of scopeIDs is important
             programBuilder.newScopedThread(Arch.PTX, threadScopeContext.threadId().id, gpuID, clusterID, ctaID);
             spaces.addThread(threadCount, gpuID, clusterID, ctaID);
+            if (scopeID.gridID() != null) {
+                if (scopeID.gridID().id >= Tag.PTX.GRIDS) {
+                    throw new ParsingException("At most " + Tag.PTX.GRIDS + " grids");
+                }
+                grids.put(threadCount, scopeID.gridID().id);
+            }
             threadCount++;
         }
         return null;
@@ -204,7 +224,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
                     continue;
                 }
                 PTXQualifiers q = PTXQualifiers.parse(instruction.Mnemonic().getText());
-                if (!Set.of("ld", "ldu", "st", "atom", "red", "mbarrier").contains(q.getName())) {
+                if (!Set.of("ld", "ldu", "st", "atom", "red", "mbarrier", "ldmatrix", "stmatrix").contains(q.getName())) {
                     continue;
                 }
                 String space = q.takeOne(SPACES);
@@ -277,6 +297,12 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             case "prefetch", "prefetchu", "applypriority" -> parseCacheControl(qualifiers, operands);
             case "createpolicy" -> parseCreatePolicy(qualifiers, operands);
             case "mbarrier" -> parseMbarrier(qualifiers, operands);
+            case "multimem" -> parseMultimem(qualifiers, operands);
+            case "wgmma" -> parseWgmma(qualifiers, operands);
+            case "griddepcontrol" -> parseGridDependencyControl(qualifiers, operands);
+            case "ldmatrix", "stmatrix" -> parseMatrixAccess(qualifiers, operands);
+            case "tensormap" -> parseTensormap(qualifiers, operands);
+            case "discard" -> parseDiscard(qualifiers, operands);
             case "cp" -> parseCopy(qualifiers, operands);
             default -> throw new ParsingException("Unsupported instruction " + qualifiers.getMnemonic());
         };
@@ -288,6 +314,9 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             }
             final String operation = Tag.PTX.asyncOperation(asyncOperationCount++);
             events.stream().filter(e -> e.hasTag(Tag.PTX.AOP)).forEach(e -> e.addTags(operation));
+            return append(events, ctx, false);
+        }
+        if (qualifiers.getName().equals("tensormap")) {
             return append(events, ctx, false);
         }
         return append(events, ctx);
@@ -1236,6 +1265,224 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     }
 
     // ----------------------------------------------------------------------------------------------------------------
+    // multimem, wgmma, griddepcontrol, ldmatrix/stmatrix, tensormap, discard
+
+    // multimem.st{.sem}{.scope}{.global}.type m, v; multimem.ld_reduce{.sem}{.scope}{.global}.op.type r, m;
+    // multimem.red{.sem}{.scope}{.global}.op.type m, v: one operation per location of m, in no stated order (M47)
+    private List<Event> parseMultimem(PTXQualifiers q, List<OperandContext> operands) {
+        final String operation = Set.of("st", "ld_reduce", "red").stream().filter(q::takeFirst).findFirst()
+                .orElseThrow(() -> new ParsingException("Unsupported instruction " + q.getMnemonic()));
+        q.take("global");
+        checkOperandCount(q, operands, 2);
+        final OperandContext address = operands.get(operation.equals("ld_reduce") ? 1 : 0);
+        final List<String> targets = multimem.get(address.getText());
+        if (targets == null) {
+            throw q.error(address.getText() + " is not a multimem address");
+        }
+        final List<Event> events = new ArrayList<>();
+        if (operation.equals("red")) {
+            final String mo = parseMo(defaultIfNull(q.takeOne(Set.of("relaxed", "release")), "relaxed"));
+            final String scope = parseScope(defaultIfNull(q.takeOne(PTXQualifiers.SCOPES), "sys"));
+            final String op = q.takeOne(RMW_OPS);
+            final String type = q.takeOne(PTXQualifiers.TYPES);
+            q.checkConsumed();
+            final Expression value = parseSingleValue(q, operands.get(1));
+            for (String target : targets) {
+                final Slot slot = new Slot(targetAddress(target), spaces.access(target, "global", mainThread, true));
+                final PTXRedOp red = (PTXRedOp) EventFactory.PTX.newRedOp(slot.address(), value,
+                        parseOperator(op, type), mo, scope);
+                red.setWrappingOp(parseWrappingOp(op));
+                red.addTags(Tag.PTX.GEN);
+                slot.addFootprint(red);
+                events.add(red);
+            }
+            return events;
+        }
+        final Semantics sem = parseSemantics(q, operation.equals("st") ? Set.of("weak", "relaxed", "release")
+                : Set.of("weak", "relaxed", "acquire"));
+        if (operation.equals("st")) {
+            q.takeOne(PTXQualifiers.TYPES);
+            q.checkConsumed();
+            final Expression value = parseSingleValue(q, operands.get(1));
+            for (String target : targets) {
+                final Slot slot = new Slot(targetAddress(target), spaces.access(target, "global", mainThread, true));
+                final Event store = EventFactory.PTX.newStore(slot.address(), value, sem.mo());
+                sem.addTags(store);
+                store.addTags(Tag.PTX.GEN);
+                slot.addFootprint(store);
+                events.add(store);
+            }
+            return events;
+        }
+        final String op = q.takeOne(RMW_OPS);
+        final String type = q.takeOne(PTXQualifiers.TYPES);
+        q.checkConsumed();
+        if (op == null) {
+            throw q.error("Missing reduction operation");
+        }
+        final Register result = parseTargetRegisters(q, operands.get(0), 1).get(0);
+        Expression reduced = null;
+        for (String target : targets) {
+            final Slot slot = new Slot(targetAddress(target), spaces.access(target, "global", mainThread, false));
+            final Register value = newAsyncRegister();
+            final Event load = EventFactory.PTX.newLoad(value, slot.address(), sem.mo());
+            sem.addTags(load);
+            load.addTags(Tag.PTX.GEN);
+            slot.addFootprint(load);
+            events.add(load);
+            reduced = reduced == null ? value : expressions.makeIntBinary(reduced, parseOperator(op, type), value);
+        }
+        events.add(EventFactory.newLocal(result, reduced));
+        return events;
+    }
+
+    private Expression targetAddress(String location) {
+        return programBuilder.getOrNewVirtualMemoryObject(location);
+    }
+
+    // wgmma.fence, wgmma.mma_async r, a, c (reads the shared matrices a and c in the async proxy; r gets the value of
+    // a), wgmma.commit_group, wgmma.wait_group N (M48)
+    private List<Event> parseWgmma(PTXQualifiers q, List<OperandContext> operands) {
+        final String operation = Set.of("fence", "mma_async", "commit_group", "wait_group").stream()
+                .filter(q::takeFirst).findFirst()
+                .orElseThrow(() -> new ParsingException("Unsupported instruction " + q.getMnemonic()));
+        q.take("sync");
+        q.take("aligned");
+        switch (operation) {
+            case "fence" -> {
+                q.checkConsumed();
+                checkOperandCount(q, operands, 0);
+                wgmmaFenced.add(mainThread);
+                return List.of();
+            }
+            case "commit_group" -> {
+                q.checkConsumed();
+                checkOperandCount(q, operands, 0);
+                commitGroup("WG");
+                return List.of();
+            }
+            case "wait_group" -> {
+                q.checkConsumed();
+                return List.of(newAsyncWait("WG", parseCount(q, operands), false));
+            }
+            default -> {
+                q.takeAll(q.remaining());
+                checkOperandCount(q, operands, 3);
+                final String group = groupTag(q, "WG");
+                final List<Event> events = new ArrayList<>();
+                final Register value = parseTargetRegisters(q, operands.get(0), 1).get(0);
+                for (int i = 1; i < 3; i++) {
+                    final Slot slot = parseSingleSlot(q, operands.get(i), "shared::cta", false);
+                    final Event read = EventFactory.PTX.newLoad(i == 1 ? value : newAsyncRegister(), slot.address(),
+                            Tag.PTX.WEAK);
+                    read.addTags(Tag.PTX.ASYNC, Tag.PTX.AOP, Tag.PTX.WGMMA, group);
+                    slot.addFootprint(read);
+                    events.add(read);
+                }
+                if (!wgmmaFenced.contains(mainThread)) {
+                    // wgmma.fence must precede the first wgmma.mma_async (33424-33428)
+                    events.add(new GenericVisibleEvent("undefined_behaviour", Tag.PTX.UB_STATIC));
+                }
+                return events;
+            }
+        }
+    }
+
+    // griddepcontrol.wait: every operation of the prerequisite grid is visible (M49); launch_dependents: no effect
+    private List<Event> parseGridDependencyControl(PTXQualifiers q, List<OperandContext> operands) {
+        final String action = q.takeOne(Set.of("wait", "launch_dependents"));
+        q.checkConsumed();
+        checkOperandCount(q, operands, 0);
+        if (action == null) {
+            throw q.error("Expected .wait or .launch_dependents");
+        }
+        if (action.equals("launch_dependents")) {
+            return List.of();
+        }
+        return List.of(new GenericVisibleEvent("griddepcontrol_wait",
+                Tag.PTX.gridWait(grids.getOrDefault(mainThread, 0))));
+    }
+
+    // ldmatrix.sync.aligned.shape.num{.trans}.shared{::cta}.type r, s and stmatrix ... s, v: weak accesses (29869,
+    // 30063), one location per thread in the test dialect
+    private List<Event> parseMatrixAccess(PTXQualifiers q, List<OperandContext> operands) {
+        final boolean load = q.getName().equals("ldmatrix");
+        final String space = q.takeOne(Set.of("shared", "shared::cta"));
+        q.takeAll(q.remaining());
+        checkOperandCount(q, operands, 2);
+        if (load) {
+            final Slot slot = parseSingleSlot(q, operands.get(1), space, false);
+            final Event read = EventFactory.PTX.newLoad(parseTargetRegisters(q, operands.get(0), 1).get(0),
+                    slot.address(), Tag.PTX.WEAK);
+            read.addTags(Tag.PTX.GEN);
+            slot.addFootprint(read);
+            return List.of(read);
+        }
+        final Slot slot = parseSingleSlot(q, operands.get(0), space, true);
+        final Event write = EventFactory.PTX.newStore(slot.address(), parseSingleValue(q, operands.get(1)),
+                Tag.PTX.WEAK);
+        write.addTags(Tag.PTX.GEN);
+        slot.addFootprint(write);
+        return List.of(write);
+    }
+
+    // tensormap.replace....global... tm, v: a weak generic write of the whole tensor map (20511-20512);
+    // tensormap.cp_fenceproxy.global.shared::cta.tensormap::generic.release.scope.sync.aligned tm, s, 128: a weak
+    // generic copy of s to tm followed by a release tensormap proxy fence (24994-24999)
+    private List<Event> parseTensormap(PTXQualifiers q, List<OperandContext> operands) {
+        if (q.takeFirst("replace")) {
+            q.takeAll(q.remaining());
+            checkOperandCount(q, operands, 2);
+            final Slot slot = parseSingleSlot(q, operands.get(0), null, true);
+            final Event write = EventFactory.PTX.newStore(slot.address(), parseSingleValue(q, operands.get(1)),
+                    Tag.PTX.WEAK);
+            write.addTags(Tag.PTX.GEN);
+            slot.addFootprint(write);
+            return List.of(write);
+        }
+        if (!q.takeFirst("cp_fenceproxy") || !q.take("global") || !q.take("shared::cta")
+                || !q.take("tensormap::generic") || !q.take("release")) {
+            throw new ParsingException("Unsupported instruction " + q.getMnemonic());
+        }
+        final String scope = q.takeOne(PTXQualifiers.SCOPES);
+        q.take("sync");
+        q.take("aligned");
+        q.checkConsumed();
+        checkOperandCount(q, operands, 3);
+        if (scope == null) {
+            throw q.error("Missing scope");
+        }
+        final Slot dst = parseSingleSlot(q, operands.get(0), "global", true);
+        final Slot src = parseSingleSlot(q, operands.get(1), "shared::cta", false);
+        final Register value = newAsyncRegister();
+        final Event read = EventFactory.PTX.newLoad(value, src.address(), Tag.PTX.WEAK);
+        read.addTags(Tag.PTX.GEN);
+        src.addFootprint(read);
+        final Event write = EventFactory.PTX.newStore(dst.address(), value, Tag.PTX.WEAK);
+        write.addTags(Tag.PTX.GEN);
+        dst.addFootprint(write);
+        final Event fence = EventFactory.PTX.newFence("fence.proxy.tensormap::generic.release");
+        fence.addTags(Tag.PTX.TMAP_FENCE, Tag.PTX.REL, parseScope(scope), Tag.PTX.GEN);
+        return List.of(read, write, fence);
+    }
+
+    // discard.global.L2 a, 128: the location has an undetermined value afterwards (17688-17691, M50)
+    private List<Event> parseDiscard(PTXQualifiers q, List<OperandContext> operands) {
+        q.take("global");
+        if (!q.take("L2")) {
+            throw q.error("Missing level .L2");
+        }
+        q.checkConsumed();
+        checkOperandCount(q, operands, 2);
+        final Slot slot = parseSingleSlot(q, operands.get(0), "global", true);
+        final Event write = EventFactory.PTX.newStore(slot.address(), programBuilder.newConstant(archType),
+                Tag.PTX.WEAK);
+        write.addTags(Tag.PTX.GEN);
+        slot.addFootprint(write);
+        return List.of(write);
+    }
+
+    // ----------------------------------------------------------------------------------------------------------------
     // Control flow and local computations
 
     @Override
@@ -1311,6 +1558,9 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             throw new ParsingException("Expected a location instead of " + operand.getText());
         }
         final String name = operand.location().getText();
+        if (multimem.containsKey(name)) {
+            throw new ParsingException("Only multimem instructions may access the multimem address " + name);
+        }
         final List<String> spaceTags = spaces.access(name, space, mainThread, write);
         final MemoryObject base = programBuilder.getOrNewVirtualMemoryObject(name);
         final int count = granules.getOrDefault(name, 1);
@@ -1446,6 +1696,10 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     // (e.g. the validity check of an mbarrier operation) stay outside it.
     private Object append(List<Event> events, ParserRuleContext ctx, boolean group) {
         final int line = ctx.getStart().getLine();
+        if (!grids.isEmpty()) {
+            final String grid = Tag.PTX.grid(grids.getOrDefault(mainThread, 0));
+            events.forEach(e -> e.addTags(grid));
+        }
         int last = events.size() - 1;
         while (group && last > 0 && !events.get(last).hasTag(Tag.MEMORY)) {
             last--;

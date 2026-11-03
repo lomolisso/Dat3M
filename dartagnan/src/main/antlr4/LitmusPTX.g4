@@ -17,6 +17,7 @@ variableDeclaratorList
 variableDeclarator
     :   variableDeclaratorLocation
     |   variableDeclaratorMbarrier
+    |   variableDeclaratorMultimem
     |   variableDeclaratorRegister
     |   variableDeclaratorRegisterLocation
     |   variableDeclaratorLocationLocation
@@ -31,6 +32,11 @@ variableDeclaratorLocation
 // b=mbarrier(): a location for an mbarrier object that a thread initializes
 variableDeclaratorMbarrier
     :   location Equals Mbarrier LPar constant? RPar (At CTA ctaID)?
+    ;
+
+// m=multimem(x, y): a multimem address that points to the locations x and y
+variableDeclaratorMultimem
+    :   location Equals Multimem LPar location (Comma location)* RPar
     ;
 
 variableDeclaratorRegister
@@ -78,7 +84,7 @@ threadScope
     ;
 
 scopeID
-    :   CTA ctaID (Comma CLUSTER clusterID)? Comma GPU gpuID
+    :   CTA ctaID (Comma CLUSTER clusterID)? Comma GPU gpuID (Comma GRID gridID)?
     ;
 
 instructionList
@@ -187,6 +193,10 @@ clusterID returns [int id]
     :   t = DigitSequence {$id = Integer.parseInt($t.text);}
     ;
 
+gridID returns [int id]
+    :   t = DigitSequence {$id = Integer.parseInt($t.text);}
+    ;
+
 gpuID returns [int id]
     :   t = DigitSequence {$id = Integer.parseInt($t.text);}
     ;
@@ -221,10 +231,12 @@ MnemonicPart
 Load    :   'ld';
 
 Mbarrier    :   'mbarrier';
+Multimem    :   'multimem';
 
 CTA     :   'cta';
 CLUSTER :   'cluster';
 GPU     :   'gpu';
+GRID    :   'grid';
 
 Add     :   'add';
 Sub     :   'sub';

@@ -82,6 +82,11 @@ final class PTXQualifiers {
         return found;
     }
 
+    // The qualifiers not taken yet
+    List<String> remaining() {
+        return List.copyOf(qualifiers);
+    }
+
     void takeAll(Collection<String> options) {
         qualifiers.removeIf(options::contains);
     }
