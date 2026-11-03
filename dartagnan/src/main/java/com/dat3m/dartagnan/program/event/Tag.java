@@ -278,6 +278,17 @@ public final class Tag {
         // Footprint of an access to a location with several granules: all of them, or a single one
         public static final String WHOLE = "WHOLE";
         public static final String PART = "PART";
+        public static final String ASYNC = "ASYNC"; // the async proxy
+        public static final String TMAP = "TMAP"; // the tensormap proxy
+        // Fences between the generic and the tensormap proxy
+        public static final String TMAP_FENCE = "TMAP_FENCE";
+        // State space of the accessed location; SHARED_CTA: shared memory of the CTA of the accessing thread
+        public static final String GLOBAL = "GLOBAL";
+        public static final String SHARED = "SHARED";
+        public static final String SHARED_CTA = "SHARED_CTA";
+        public static final String LOCAL = "LOCAL";
+        public static final String CONST = "CONST";
+        public static final String PARAM = "PARAM";
         // Virtual memory
         public static final String ALIAS = "ALIAS";
         // Barrier Mode

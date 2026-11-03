@@ -39,6 +39,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     private final int granuleSize = types.getMemorySizeInBytes(archType);
     // Number of granules of the locations declared as x[0], x[1], ...
     private final Map<String, Integer> granules = new HashMap<>();
+    private final PTXStateSpaces spaces = new PTXStateSpaces();
     private int mainThread;
     private int threadCount = 0;
 
@@ -46,7 +47,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     private static final Set<String> STORE_SEMS = Set.of("weak", "relaxed", "release", "volatile", "mmio");
     private static final Set<String> RMW_SEMS = Set.of("relaxed", "acquire", "release", "acq_rel");
     private static final Set<String> FENCE_SEMS = Set.of("sc", "acq_rel", "acquire", "release");
-    private static final Set<String> SPACES = Set.of("global");
+    private static final Set<String> SPACES = PTXStateSpaces.QUALIFIERS;
     private static final Set<String> RMW_OPS = Set.of(
             "add", "sub", "mul", "div", "and", "or", "xor", "min", "max", "inc", "dec", "exch", "cas");
 
@@ -61,6 +62,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         visitThreadDeclaratorList(ctx.program().threadDeclaratorList());
         declareGranules(ctx.variableDeclaratorList());
         visitVariableDeclaratorList(ctx.variableDeclaratorList());
+        observeStateSpaces(ctx.program().instructionList());
         visitInstructionList(ctx.program().instructionList());
         VisitorLitmusAssertions.parseAssertions(programBuilder, ctx.assertionList(), ctx.assertionFilter());
         return programBuilder.build();
@@ -91,6 +93,9 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     public Object visitVariableDeclaratorLocation(VariableDeclaratorLocationContext ctx) {
         String name = ctx.location().getText();
         IntLiteral value = (IntLiteral) ctx.constant().accept(this);
+        if (ctx.ctaID() != null) {
+            spaces.declareShared(name, ctx.ctaID().id);
+        }
         if (!granules.containsKey(name)) {
             programBuilder.initVirLocEqCon(name, value);
             return null;
@@ -157,9 +162,33 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             int clusterID = scopeID.clusterID() != null ? scopeID.clusterID().id : -2 - ctaID;
             // NB: the order of scopeIDs is important
             programBuilder.newScopedThread(Arch.PTX, threadScopeContext.threadId().id, gpuID, clusterID, ctaID);
+            spaces.addThread(threadCount, gpuID, clusterID, ctaID);
             threadCount++;
         }
         return null;
+    }
+
+    // The state space qualifiers of all loads, stores and atomic operations decide the space and the owner of the
+    // locations they access, before any event is built.
+    private void observeStateSpaces(InstructionListContext ctx) {
+        for (InstructionRowContext row : ctx.instructionRow()) {
+            for (int i = 0; i < threadCount; i++) {
+                PtxInstructionContext instruction = row.instruction(i).ptxInstruction();
+                if (instruction == null || instruction.Mnemonic() == null) {
+                    continue;
+                }
+                PTXQualifiers q = PTXQualifiers.parse(instruction.Mnemonic().getText());
+                if (!Set.of("ld", "ldu", "st", "atom", "red").contains(q.getName())) {
+                    continue;
+                }
+                String space = q.takeOne(SPACES);
+                for (OperandContext operand : instruction.operand()) {
+                    if (operand.location() != null) {
+                        spaces.observe(operand.location().getText(), space, i);
+                    }
+                }
+            }
+        }
     }
 
     // ----------------------------------------------------------------------------------------------------------------
@@ -193,7 +222,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             if (operand.location() == null) {
                 return append(List.of(EventFactory.newLocal(register, parseValues(operand).get(0))), ctx);
             }
-            Slot slot = parseSingleSlot(PTXQualifiers.parse("ld"), operand);
+            Slot slot = parseSingleSlot(PTXQualifiers.parse("ld"), operand, null, false);
             Event load = EventFactory.PTX.newLoad(register, slot.address(), Tag.PTX.WEAK);
             load.addTags(Tag.PTX.GEN);
             slot.addFootprint(load);
@@ -229,7 +258,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         final boolean nonCoherent = q.take("nc");
         final String space = q.takeOne(SPACES);
         final Semantics sem = parseSemantics(q, unified ? Set.of() : LOAD_SEMS);
-        if (nonCoherent && (!sem.mo.equals(Tag.PTX.WEAK) || space == null)) {
+        if (nonCoherent && (!sem.mo.equals(Tag.PTX.WEAK) || !"global".equals(space))) {
             throw q.error("Non-coherent loads are weak loads from .global");
         }
         q.takeAll(PTXQualifiers.HINTS);
@@ -240,7 +269,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         final List<Event> events = new ArrayList<>();
         for (int i = 0; i < width; i++) {
             OperandContext target = operands.get(i);
-            List<Slot> slots = parseSlots(operands.get(width + i));
+            List<Slot> slots = parseSlots(operands.get(width + i), space, false);
             List<Register> registers = parseTargetRegisters(q, target, slots.size());
             for (int j = 0; j < slots.size(); j++) {
                 Event load = EventFactory.PTX.newLoad(registers.get(j), slots.get(j).address(), sem.mo);
@@ -256,7 +285,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
 
     private List<Event> parseStore(PTXQualifiers q, List<OperandContext> operands) {
         final String proxy = q.getName().equals("sust") ? Tag.PTX.SUR : Tag.PTX.GEN;
-        q.takeOne(SPACES);
+        final String space = q.takeOne(SPACES);
         final Semantics sem = parseSemantics(q, STORE_SEMS);
         q.takeAll(PTXQualifiers.HINTS);
         final int width = parseVectorWidth(q);
@@ -265,7 +294,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         checkOperandCount(q, operands, 2 * width);
         final List<Event> events = new ArrayList<>();
         for (int i = 0; i < width; i++) {
-            List<Slot> slots = parseSlots(operands.get(i));
+            List<Slot> slots = parseSlots(operands.get(i), space, true);
             List<Expression> values = parseValues(operands.get(width + i));
             if (values.size() != 1 && values.size() != slots.size()) {
                 throw q.error("Expected one value or one value per granule");
@@ -330,7 +359,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         final String proxy = q.getName().equals("suatom") ? Tag.PTX.SUR : Tag.PTX.GEN;
         final String mo = parseMo(defaultIfNull(q.takeOne(RMW_SEMS), "relaxed"));
         final String scope = parseScope(defaultIfNull(q.takeOne(PTXQualifiers.SCOPES), "gpu"));
-        q.takeOne(SPACES);
+        final String space = q.takeOne(SPACES);
         final String op = q.takeOne(RMW_OPS);
         if (op == null) {
             throw q.error("Missing operation");
@@ -340,7 +369,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         q.checkConsumed();
         checkOperandCount(q, operands, op.equals("cas") ? 4 : 3);
         final Register result = parseTargetRegisters(q, operands.get(0), 1).get(0);
-        final Slot slot = parseSingleSlot(q, operands.get(1));
+        final Slot slot = parseSingleSlot(q, operands.get(1), space, true);
         final Expression value = parseSingleValue(q, operands.get(2));
         final Event atom = switch (op) {
             case "cas" -> EventFactory.PTX.newAtomCAS(slot.address(), result, value,
@@ -362,7 +391,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         final String proxy = q.getName().equals("sured") ? Tag.PTX.SUR : Tag.PTX.GEN;
         final String mo = parseMo(defaultIfNull(q.takeOne(RMW_SEMS), "relaxed"));
         final String scope = parseScope(defaultIfNull(q.takeOne(PTXQualifiers.SCOPES), "gpu"));
-        q.takeOne(SPACES);
+        final String space = q.takeOne(SPACES);
         final String op = q.takeOne(RMW_OPS);
         if (op == null || op.equals("cas") || op.equals("exch")) {
             throw q.error("Missing or unsupported reduction operation");
@@ -371,7 +400,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         final String type = q.takeOne(PTXQualifiers.TYPES);
         q.checkConsumed();
         checkOperandCount(q, operands, 2);
-        final Slot slot = parseSingleSlot(q, operands.get(0));
+        final Slot slot = parseSingleSlot(q, operands.get(0), space, true);
         final Expression value = parseSingleValue(q, operands.get(1));
         final PTXRedOp red = (PTXRedOp) EventFactory.PTX.newRedOp(slot.address(), value, parseOperator(op, type),
                 mo, scope);
@@ -410,8 +439,11 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     // Fences and barriers
 
     private List<Event> parseFence(PTXQualifiers q, List<OperandContext> operands) {
-        checkOperandCount(q, operands, 0);
         final Event fence = EventFactory.PTX.newFence(q.getMnemonic().toLowerCase());
+        if (q.take("proxy")) {
+            return parseProxyFence(q, operands, fence);
+        }
+        checkOperandCount(q, operands, 0);
         if (q.getName().equals("membar")) {
             // membar is a synonym for fence.sc; the levels cta, gl and sys are the scopes cta, gpu and sys
             final String level = q.takeOne(Set.of("cta", "gl", "sys"));
@@ -422,20 +454,6 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             fence.addTags(Tag.PTX.SC, level.equals("gl") ? Tag.PTX.GPU : parseScope(level), Tag.PTX.GEN);
             return List.of(fence);
         }
-        if (q.take("proxy")) {
-            final String kind = q.takeOne(Set.of("alias", "constant", "surface", "texture"));
-            q.checkConsumed();
-            if (kind == null) {
-                throw q.error("Missing proxy kind");
-            }
-            fence.addTags(switch (kind) {
-                case "alias" -> Tag.PTX.ALIAS;
-                case "constant" -> Tag.PTX.CON;
-                case "surface" -> Tag.PTX.SUR;
-                default -> Tag.PTX.TEX;
-            });
-            return List.of(fence);
-        }
         final String sem = defaultIfNull(q.takeOne(FENCE_SEMS), "acq_rel");
         final String scope = q.takeOne(PTXQualifiers.SCOPES);
         q.checkConsumed();
@@ -443,6 +461,50 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             throw q.error("Missing scope");
         }
         fence.addTags(parseMo(sem), parseScope(scope), Tag.PTX.GEN);
+        return List.of(fence);
+    }
+
+    // fence.proxy.{alias,surface,texture,constant}, fence.proxy.async{.global,.shared::cta,.shared::cluster}
+    // (bi-directional between the generic proxy and the named one), fence.proxy.tensormap::generic.release.scope
+    // and fence.proxy.tensormap::generic.acquire.scope a, 128 (uni-directional, from generic to tensormap).
+    private List<Event> parseProxyFence(PTXQualifiers q, List<OperandContext> operands, Event fence) {
+        if (q.take("tensormap::generic")) {
+            final String sem = q.takeOne(Set.of("release", "acquire"));
+            final String scope = q.takeOne(PTXQualifiers.SCOPES);
+            q.checkConsumed();
+            if (sem == null || scope == null) {
+                throw q.error("Expected .release or .acquire and a scope");
+            }
+            // The acquire fence names the tensor map it applies to; the address range is not modelled.
+            checkOperandCount(q, operands, sem.equals("acquire") ? 2 : 0);
+            fence.addTags(Tag.PTX.TMAP_FENCE, parseMo(sem), parseScope(scope), Tag.PTX.GEN);
+            return List.of(fence);
+        }
+        checkOperandCount(q, operands, 0);
+        if (q.take("async")) {
+            final String space = q.takeOne(Set.of("global", "shared::cta", "shared::cluster"));
+            q.checkConsumed();
+            fence.addTags(Tag.PTX.ASYNC);
+            if (space != null) {
+                fence.addTags(switch (space) {
+                    case "global" -> Tag.PTX.GLOBAL;
+                    case "shared::cta" -> Tag.PTX.SHARED_CTA;
+                    default -> Tag.PTX.SHARED;
+                });
+            }
+            return List.of(fence);
+        }
+        final String kind = q.takeOne(Set.of("alias", "constant", "surface", "texture"));
+        q.checkConsumed();
+        if (kind == null) {
+            throw q.error("Missing proxy kind");
+        }
+        fence.addTags(switch (kind) {
+            case "alias" -> Tag.PTX.ALIAS;
+            case "constant" -> Tag.PTX.CON;
+            case "surface" -> Tag.PTX.SUR;
+            default -> Tag.PTX.TEX;
+        });
         return List.of(fence);
     }
 
@@ -595,20 +657,19 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
 
     // One granule accessed by an instruction. The footprint tag tells whether the instruction accesses every
     // granule of a location with several granules (WHOLE) or only one of them (PART).
-    private record Slot(Expression address, String footprint) {
+    private record Slot(Expression address, List<String> tags) {
         void addFootprint(Event event) {
-            if (footprint != null) {
-                event.addTags(footprint);
-            }
+            event.addTags(tags);
         }
     }
 
-    // x accesses every granule of x, x[k] only the granule k
-    private List<Slot> parseSlots(OperandContext operand) {
+    // x accesses every granule of x, x[k] only the granule k. The space is the instruction's state space qualifier.
+    private List<Slot> parseSlots(OperandContext operand, String space, boolean write) {
         if (operand.location() == null) {
             throw new ParsingException("Expected a location instead of " + operand.getText());
         }
         final String name = operand.location().getText();
+        final List<String> spaceTags = spaces.access(name, space, mainThread, write);
         final MemoryObject base = programBuilder.getOrNewVirtualMemoryObject(name);
         final int count = granules.getOrDefault(name, 1);
         if (operand.index() != null) {
@@ -616,17 +677,26 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             if (index >= count) {
                 throw new ParsingException("Location " + name + " has no granule " + index);
             }
-            return List.of(new Slot(granuleAddress(base, index), count > 1 ? Tag.PTX.PART : null));
+            return List.of(new Slot(granuleAddress(base, index), withFootprint(spaceTags, count > 1 ? Tag.PTX.PART : null)));
         }
         final List<Slot> slots = new ArrayList<>();
         for (int i = 0; i < count; i++) {
-            slots.add(new Slot(granuleAddress(base, i), count > 1 ? Tag.PTX.WHOLE : null));
+            slots.add(new Slot(granuleAddress(base, i), withFootprint(spaceTags, count > 1 ? Tag.PTX.WHOLE : null)));
         }
         return slots;
     }
 
-    private Slot parseSingleSlot(PTXQualifiers q, OperandContext operand) {
-        final List<Slot> slots = parseSlots(operand);
+    private static List<String> withFootprint(List<String> tags, String footprint) {
+        if (footprint == null) {
+            return tags;
+        }
+        final List<String> all = new ArrayList<>(tags);
+        all.add(footprint);
+        return all;
+    }
+
+    private Slot parseSingleSlot(PTXQualifiers q, OperandContext operand, String space, boolean write) {
+        final List<Slot> slots = parseSlots(operand, space, write);
         if (slots.size() != 1) {
             throw q.error("Expected a single granule instead of " + operand.getText());
         }

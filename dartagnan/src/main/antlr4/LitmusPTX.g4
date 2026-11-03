@@ -23,7 +23,7 @@ variableDeclarator
     ;
 
 variableDeclaratorLocation
-    :   location index? Equals constant
+    :   location index? Equals constant (At CTA ctaID)?
     ;
 
 variableDeclaratorRegister
