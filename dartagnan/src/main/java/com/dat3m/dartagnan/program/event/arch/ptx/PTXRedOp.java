@@ -7,17 +7,33 @@ import com.dat3m.dartagnan.program.event.common.RMWOpBase;
 
 public class PTXRedOp extends RMWOpBase {
 
+    // If set, the operation is this wrapping operation instead of the binary operator.
+    private PTXWrappingOp wrappingOp;
+
     public PTXRedOp(Expression address, Expression value, IntBinaryOp op, String mo) {
         super(address, op, value, mo);
     }
 
     protected PTXRedOp(PTXRedOp other) {
         super(other);
+        this.wrappingOp = other.wrappingOp;
+    }
+
+    public PTXWrappingOp getWrappingOp() {
+        return wrappingOp;
+    }
+
+    public void setWrappingOp(PTXWrappingOp wrappingOp) {
+        this.wrappingOp = wrappingOp;
+    }
+
+    private String getOperationName() {
+        return wrappingOp != null ? wrappingOp.getName() : operator.getName();
     }
 
     @Override
     public String defaultString() {
-        return String.format("red_%s(%s, %s)", operator.getName(), operand, address);
+        return String.format("red_%s(%s, %s)", getOperationName(), operand, address);
     }
 
     @Override

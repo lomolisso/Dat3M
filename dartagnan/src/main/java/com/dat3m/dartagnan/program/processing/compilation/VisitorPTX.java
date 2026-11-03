@@ -1,6 +1,8 @@
 package com.dat3m.dartagnan.program.processing.compilation;
 
 import com.dat3m.dartagnan.expression.Expression;
+import com.dat3m.dartagnan.expression.integers.IntBinaryOp;
+import com.dat3m.dartagnan.expression.type.IntegerType;
 import com.dat3m.dartagnan.program.Register;
 import com.dat3m.dartagnan.program.event.Event;
 import com.dat3m.dartagnan.program.event.Tag;
@@ -8,6 +10,7 @@ import com.dat3m.dartagnan.program.event.arch.ptx.PTXAtomCAS;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXAtomExch;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXAtomOp;
 import com.dat3m.dartagnan.program.event.arch.ptx.PTXRedOp;
+import com.dat3m.dartagnan.program.event.arch.ptx.PTXWrappingOp;
 import com.dat3m.dartagnan.program.event.core.Load;
 import com.dat3m.dartagnan.program.event.core.RMWStore;
 
@@ -23,7 +26,7 @@ public class VisitorPTX extends VisitorBase {
         String mo = e.getMo();
         Expression address = e.getAddress();
         Register dummy = e.getFunction().newRegister(resultRegister.getType());
-        Expression value = expressions.makeIntBinary(dummy, e.getOperator(), e.getOperand());
+        Expression value = computeValue(dummy, e.getOperator(), e.getWrappingOp(), e.getOperand());
         Load load = newRMWLoadWithMo(dummy, address, Tag.PTX.loadMO(mo));
         RMWStore store = newRMWStoreWithMo(load, address, value, Tag.PTX.storeMO(mo));
         propagateTags(e, load);
@@ -82,7 +85,7 @@ public class VisitorPTX extends VisitorBase {
     public List<Event> visitPtxRedOp(PTXRedOp e) {
         Expression address = e.getAddress();
         Register dummy = e.getFunction().newRegister(e.getAccessType());
-        Expression value = expressions.makeIntBinary(dummy, e.getOperator(), e.getOperand());
+        Expression value = computeValue(dummy, e.getOperator(), e.getWrappingOp(), e.getOperand());
         Load load = newRMWLoadWithMo(dummy, address, Tag.PTX.loadMO(e.getMo()));
         RMWStore store = newRMWStoreWithMo(load, address, value, Tag.PTX.storeMO(e.getMo()));
         propagateTags(e, load);
@@ -93,8 +96,29 @@ public class VisitorPTX extends VisitorBase {
         );
     }
 
+    // atom and red semantics:
+    // https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#parallel-synchronization-and-communication-instructions-atom
+    //   inc(r, s) = (r >= s) ? 0 : r+1;
+    //   dec(r, s) = (r==0 || r > s) ? s : r-1;
+    private Expression computeValue(Register old, IntBinaryOp operator, PTXWrappingOp wrappingOp, Expression operand) {
+        if (wrappingOp == null) {
+            return expressions.makeIntBinary(old, operator, operand);
+        }
+        final IntegerType type = (IntegerType) old.getType();
+        final Expression bound = expressions.makeCast(operand, type, false);
+        return switch (wrappingOp) {
+            case INC -> expressions.makeITE(expressions.makeGTE(old, bound, false),
+                    expressions.makeZero(type), expressions.makeAdd(old, expressions.makeOne(type)));
+            case DEC -> expressions.makeITE(
+                    expressions.makeOr(expressions.makeEQ(old, expressions.makeZero(type)),
+                            expressions.makeGT(old, bound, false)),
+                    bound, expressions.makeSub(old, expressions.makeOne(type)));
+        };
+    }
+
     private void propagateTags(Event source, Event target) {
-        for (String tag : List.of(Tag.PTX.CTA, Tag.PTX.GPU, Tag.PTX.SYS, Tag.PTX.GEN, Tag.PTX.TEX, Tag.PTX.SUR, Tag.PTX.CON)) {
+        for (String tag : List.of(Tag.PTX.CTA, Tag.PTX.CLUSTER, Tag.PTX.GPU, Tag.PTX.SYS, Tag.PTX.GEN, Tag.PTX.TEX,
+                Tag.PTX.SUR, Tag.PTX.CON, Tag.PTX.WHOLE, Tag.PTX.PART)) {
             if (source.hasTag(tag)) {
                 target.addTags(tag);
             }
