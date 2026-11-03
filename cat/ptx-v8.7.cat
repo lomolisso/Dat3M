@@ -13,7 +13,9 @@ PTX
 // si: events of the same instruction (the elements of a vector access, the granules of a wide access)
 
 // Scope tags: CTA, CLUSTER, GPU, SYS
-// Proxy tags: GEN (generic), SUR (surface), TEX (texture, also ld.global.nc, M10), CON (constant)
+// Proxy tags: GEN (generic), SUR (surface), TEX (texture, also ld.global.nc, M10), CON (constant), ASYNC (async),
+//             TMAP (tensormap); TMAP_FENCE: fence.proxy.tensormap::generic (M26)
+// State space tags: GLOBAL, SHARED, SHARED_CTA (shared memory of the accessing thread's CTA), LOCAL, CONST, PARAM
 // Other tags: VOL (volatile), MMIO (mmio), both also RLX and SYS (M8, M9);
 //             WHOLE / PART: the access covers every granule / a single granule of a location with several (M14)
 
@@ -32,14 +34,15 @@ let fr = rf^-1; co
 let strong-write = W & (RLX | REL)
 let strong-read = R & (RLX | ACQ)
 let strong-m = strong-write | strong-read
-// Memory fences (Table 20: membar, fence.sc, fence.acq_rel); fence.release and fence.acquire act on one side only (M2)
+// Memory fences (Table 20: membar, fence.sc, fence.acq_rel); fence.release and fence.acquire act on one side only (M2),
+// and so do the .release and .acquire tensormap proxy fences (22662-22664, M26)
 let memory-fence = F & (SC | ACQ_REL)
 let release-fence = memory-fence | (F & REL)
 let acquire-fence = memory-fence | (F & ACQ)
 let strong-operation = strong-m | release-fence | acquire-fence
 
 (* 8.7 Morally strong operations *)
-let same-proxy = GEN * GEN | SUR * SUR | TEX * TEX | CON * CON
+let same-proxy = GEN * GEN | SUR * SUR | TEX * TEX | CON * CON | ASYNC * ASYNC | TMAP * TMAP
 // The operations are related in program order, or each operation is strong and
 // specifies a scope that includes the thread executing the other operation.
 let ms-scope = (po | po^-1) | ([strong-operation]; sr; [strong-operation])
@@ -70,8 +73,13 @@ let sync = sync-pattern | sync_fence | sync-barrier
 (* 8.9.5 Base causality order *)
 let cause-base = (po?; (sync; po?)+) | po
 
-(* 8.9.5 Proxy-preserved base causality order, as in the PTX 7.5 model (M21) *)
-let proxy-fence-ops = [F]; (same-proxy & scta); [M]
+(* 8.9.5 Proxy-preserved base causality order: the PTX 7.5 model's rules (M21, M27), with the async proxy and
+   state-space-limited async proxy fences (M25), and the tensormap proxy fences (M26) *)
+// A bi-directional proxy fence orders the operations of its CTA that use its proxy; fence.proxy.async with a state
+// space only those on objects in that space
+let fence-space = ([F & ~(GLOBAL | SHARED | SHARED_CTA)] ; (_ * M))
+                | ([F & GLOBAL]; (_ * GLOBAL)) | ([F & SHARED]; (_ * SHARED)) | ([F & SHARED_CTA]; (_ * SHARED_CTA))
+let proxy-fence-ops = ([F & ~TMAP_FENCE]; (same-proxy & scta); [M]) & fence-space
 let proxy-preserved-cause-base
                 = ([GEN]; (vloc & cause-base); [GEN])
                 | ([M]; (same-proxy & scta & vloc & cause-base); [M])
@@ -82,6 +90,8 @@ let proxy-preserved-cause-base
                 | loc & (cause-base & (proxy-fence-ops^-1); cause-base; [F & ALIAS]; cause-base; [GEN])
                 | loc & ([GEN]; cause-base; [F & ALIAS]; cause-base; cause-base & proxy-fence-ops)
                 | loc & (cause-base & (proxy-fence-ops^-1); cause-base; [F & ALIAS]; cause-base; cause-base & proxy-fence-ops)
+                // generic write -> tensormap release fence -> tensormap acquire fence -> tensormap read
+                | vloc & ([GEN]; cause-base; [TMAP_FENCE & REL]; cause-base; [TMAP_FENCE & ACQ]; cause-base; [TMAP])
 
 (* 8.9.5 Causality order *)
 let cause = proxy-preserved-cause-base | (observation; proxy-preserved-cause-base)

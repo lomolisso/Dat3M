@@ -299,12 +299,103 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
   existing tests, with the obvious meaning.
 - **Tests.** `Kamui/kamui/ptx87/rmw/rmw-ops+values`; `Nvidia/*`, `Manual/*` tests with `sub` or `red.acq_rel`.
 
-### M21. Proxies, aliases and `bar.cta.*` (provisional)
+### M21. Proxies, aliases and `bar.cta.*` from the PTX 7.5 model
 
-- **Question.** These belong to later parts of the work (state spaces and proxies; barriers).
-- **Choice.** Until then the model keeps the PTX 7.5 definitions unchanged: same-proxy, proxy-preserved base
-  causality with alias and proxy fences, and barrier synchronization `syncbar & scta`.
+- **Question.** How much of the PTX 7.5 model's treatment of proxies and barriers is kept?
+- **Choice.** The proxy rules are kept and extended (M25-M27). Barriers: see the barrier entries.
 - **Tests.** `Nvidia/proxy/*`, `Manual/proxy/*`, `Barrier/*`, `Kamui/mixedproxy/*`.
+
+### M22. State spaces and the owner of shared locations (test dialect)
+
+- **Question.** Litmus locations carry no declaration of their state space. Which space is a location in, which CTA
+  owns a shared location, and which accesses are valid?
+- **Manual.** 3146-3148: "The shared (.shared) state space is a memory that is owned by an executing CTA and is
+  accessible to the threads of all the CTAs within a cluster." 3150-3154: "Additional sub-qualifiers ::cta or
+  ::cluster can be specified on instructions with .shared state space to indicate whether the address belongs to
+  the shared memory window of the executing CTA or of any CTA in the cluster respectively. ... If no sub-qualifier
+  is specified with the .shared state space, then it defaults to ::cta." 2942: "The local state space (.local) is
+  private memory for each thread". 2886: "The constant (.const) state space is a read-only memory initialized by the
+  host." 2985: kernel parameters are "addressable, read-only variables declared in the .param state space".
+  5419-5423 (generic addressing): the other spaces are windows of the generic address space.
+- **Choice.** A location is in `.global` unless it is declared `s=0 @cta N` (shared memory of CTA N) or accessed with
+  a state space qualifier (`ld`, `st`, `atom`, `red`). A shared location without a declared owner belongs to the
+  CTA of the first thread (in program text) that accesses it with `.shared`; a `.local` location to the first thread
+  that accesses it. Accesses without a qualifier use generic addressing and may reach any space. The test is
+  rejected if a location is used in two spaces, if `.shared`/`.shared::cta` names a location of another CTA (it is
+  outside the executing CTA's window), if a thread outside the owner's cluster accesses shared memory, if another
+  thread accesses a `.local` location, or if a `.const`/`.param` location is written. Alternative: accept such
+  programs and treat them as undefined behaviour; rejected because they are not valid programs at all.
+- **Tests.** `Kamui/kamui/ptx87/spaces/*`, `Kamui/kamui/ptx87/ld-st/CoWR+local`, `ld.const+initial`, and every later
+  test with shared memory.
+
+### M23. The `.shared::cta` and `.shared::cluster` windows name the same address
+
+- **Question.** The executing CTA's shared memory can be accessed through the `::cta` window and through the
+  `::cluster` window. Are the two accesses to the same address, or aliases (distinct virtual addresses of one
+  location, which need `fence.proxy.alias`, 6779-6781)?
+- **Manual.** 3152-3153: "The addresses in the .shared::cta window also fall within the .shared::cluster window."
+  6557: aliases are "Two distinct virtual addresses" that "map to the same memory location".
+- **Alternatives.** (a) the same address; (b) aliases.
+- **Choice.** (a): 3152-3153 says the `::cta` addresses *are* `::cluster` addresses ("fall within"), not that they
+  are mapped to the same location from another address.
+- **Tests.** `Kamui/kamui/ptx87/spaces/CoRR+relaxed.cluster+two-windows` (forbidden; allowed under (b)).
+
+### M24. `ld.const` and `cold`
+
+- **Question.** Upstream tests use `cold` for a load through the constant proxy. Is `ld.const` such a load?
+- **Manual.** 6775-6776: "Memory operations as defined in Operation types use generic method of memory access, i.e.
+  a generic proxy." 6618: every variant of `ld` is a read operation.
+- **Choice.** `ld.const` is a weak generic-proxy load from a `.const` location; `cold` keeps its upstream meaning
+  (constant proxy). The two are different instructions in the dialect.
+- **Tests.** `Kamui/kamui/ptx87/ld-st/ld.const+initial`.
+
+### M25. `fence.proxy.async` and its state space
+
+- **Question.** Which operations does `fence.proxy.async{.global,.shared::cta,.shared::cluster}` order?
+- **Manual.** 22653-22660: "The .proxykind qualifier indicates the bi-directional proxy ordering that is established
+  between the memory accesses done between the generic proxy and the proxy specified by .proxykind. ... Value
+  .async of the .proxykind qualifier specifies that the memory ordering is established between the async proxy and
+  the generic proxy. The memory ordering is limited only to operations performed on objects in the state space
+  specified. If no state space is specified, then the memory ordering applies on all state spaces."
+- **Choice.** A bi-directional proxy fence between the generic and the async proxy, following the PTX 7.5 model's
+  rules for proxy fences (M27), limited to operations on locations in `.global`, in any shared memory
+  (`.shared::cluster`), or in the shared memory of the fence's CTA (`.shared::cta`). Alternative for
+  `.shared::cta`: operations written with a `.shared::cta` qualifier; rejected because the text speaks of objects in
+  the space, not of the instructions' qualifiers.
+- **Tests.** The `fence.proxy.async` tests of `Kamui/kamui/ptx87/async-bulk/` and `wgmma/` (decided with the
+  asynchronous operations).
+
+### M26. Tensormap proxy fences
+
+- **Question.** What do `fence.proxy.tensormap::generic.release` and `.acquire [a], 128` do?
+- **Manual.** 22645-22647: "A uni-directional proxy ordering from the from-proxykind to the to-proxykind establishes
+  ordering between a prior memory access performed via the from-proxykind and a subsequent memory access performed
+  via the to-proxykind." 22662-22664: "A .release proxy fence can form a release sequence that synchronizes with an
+  acquire sequence that contains a .acquire proxy fence." 22632-22634: the address operand gives "the memory range
+  [addr, addr+size-1] on which the ordering guarantees on the memory accesses across the proxies is to be provided".
+  19591: "The tensorMap is accessed in tensormap proxy."
+- **Alternatives.** (a) a generic write reaches a later tensormap-proxy read of the same address only through a
+  release tensormap fence after the write and an acquire tensormap fence before the read, with base causality in
+  between; each fence is also a one-sided pattern fence (like `fence.release`/`fence.acquire`, M2); (b) either fence
+  alone orders the proxies.
+- **Choice.** (a): the ordering is uni-directional and 22662-22664 pairs the release fence with the acquire fence.
+  The acquire fence's address range is not modelled: it orders tensormap reads of every location (the tests use a
+  single tensor map).
+- **Tests.** `Kamui/kamui/ptx87/tensormap/*` (decided with the tensor copies).
+
+### M27. Proxy-preserved base causality for proxies other than generic and alias
+
+- **Question.** The manual's proxy-preserved base causality (6994-7005) has three cases: same address in the generic
+  proxy; same address, same proxy and same thread block; aliases with an alias proxy fence on the path. It never
+  says how a `fence.proxy` for surfaces, textures, constants or the async proxy orders operations of different
+  proxies (gap 8).
+- **Manual.** 6779-6781: "A proxy fence is required to synchronize memory operations across different proxies."
+  6996-7005 (the three cases).
+- **Choice.** Keep the PTX 7.5 model's rules: an operation of one proxy reaches an operation of another at the same
+  address when the base causality path goes through a proxy fence of the non-generic proxy in the CTA of that
+  operation ("thread block" read as CTA), with the alias rules for virtual aliases. The async proxy is added as one
+  more proxy (M25); the tensormap proxy uses M26. No upstream test changes verdict.
+- **Tests.** `Nvidia/proxy/*`, `Manual/proxy/*`, `Kamui/mixedproxy/*`, and the async and tensormap tests.
 
 ## Tests Dartagnan cannot decide
 
