@@ -1,0 +1,132 @@
+PTX
+(* NVIDIA. Parallel Thread Execution ISA Version 8.7, chapter 8 (Memory Consistency Model) *)
+
+// The choices this model makes where the manual leaves room for interpretation are described in ptx-v8.7.md
+// (entries M1, M2, ...). Section numbers below refer to the manual.
+
+// Base relations:
+// vloc: same virtual address
+// sr: same scope (each event is strong and its scope includes the thread of the other)
+// scta: same CTA
+// syncbar: barriers on the same logical barrier resource
+// sync_fence: an order over the pairs of morally strong fence.sc operations
+// si: events of the same instruction (the elements of a vector access, the granules of a wide access)
+
+// Scope tags: CTA, CLUSTER, GPU, SYS
+// Proxy tags: GEN (generic), SUR (surface), TEX (texture, also ld.global.nc, M10), CON (constant)
+// Other tags: VOL (volatile), MMIO (mmio), both also RLX and SYS (M8, M9);
+//             WHOLE / PART: the access covers every granule / a single granule of a location with several (M14)
+
+(*******************)
+(*   Auxiliaries   *)
+(*******************)
+
+// 8.2.4: the operations of one instruction are performed in an unspecified order (M15, M18)
+let po = po \ si
+
+// Coherence order is a partial transitive order (8.9.6); recompute fr from it
+let co = co+
+let fr = rf^-1; co
+
+(* 8.4 Operation types *)
+let strong-write = W & (RLX | REL)
+let strong-read = R & (RLX | ACQ)
+let strong-m = strong-write | strong-read
+// Memory fences (Table 20: membar, fence.sc, fence.acq_rel); fence.release and fence.acquire act on one side only (M2)
+let memory-fence = F & (SC | ACQ_REL)
+let release-fence = memory-fence | (F & REL)
+let acquire-fence = memory-fence | (F & ACQ)
+let strong-operation = strong-m | release-fence | acquire-fence
+
+(* 8.7 Morally strong operations *)
+let same-proxy = GEN * GEN | SUR * SUR | TEX * TEX | CON * CON
+// The operations are related in program order, or each operation is strong and
+// specifies a scope that includes the thread executing the other operation.
+let ms-scope = (po | po^-1) | ([strong-operation]; sr; [strong-operation])
+// Two memory operations overlap completely if they access the same granules (M14)
+let partial-overlap = vloc & ((WHOLE * PART) | (PART * WHOLE))
+let complete-overlap = vloc \ partial-overlap
+let ms-overlap = ((M * M) & complete-overlap) | ((_ * _) \ (M * M))
+let morally-strong = (ms-scope & same-proxy & ms-overlap) \ id
+
+(* 8.9.2 Observation order: a write, then a chain of atomic operations, then a read (M6) *)
+let ms-rf = morally-strong & rf
+let observation = ms-rf; (rmw; ms-rf)*
+
+(* 8.8 Release and acquire patterns *)
+let po-vloc = po & vloc
+let release-pattern = ([W & REL]; po-vloc?; [strong-write]) | ([release-fence]; po; [strong-write])
+let acquire-pattern = ([strong-read]; po-vloc?; [R & ACQ]) | ([strong-read]; po; [acquire-fence])
+
+(* 8.9.4 Memory synchronization *)
+// A release pattern synchronizes with an acquire pattern if a write of the first precedes a read of the second in
+// observation order, and the first operation of the first and the last operation of the second are morally strong.
+let sync-pattern = morally-strong & (release-pattern; observation; acquire-pattern)
+// Barriers as in the PTX 7.5 model (M21)
+let sync-barrier = syncbar & scta
+// Fence-SC order (8.9.3, M4)
+let sync = sync-pattern | sync_fence | sync-barrier
+
+(* 8.9.5 Base causality order *)
+let cause-base = (po?; (sync; po?)+) | po
+
+(* 8.9.5 Proxy-preserved base causality order, as in the PTX 7.5 model (M21) *)
+let proxy-fence-ops = [F]; (same-proxy & scta); [M]
+let proxy-preserved-cause-base
+                = ([GEN]; (vloc & cause-base); [GEN])
+                | ([M]; (same-proxy & scta & vloc & cause-base); [M])
+                | vloc & (cause-base & (proxy-fence-ops^-1); cause-base; [GEN])
+                | vloc & ([GEN]; cause-base; cause-base & proxy-fence-ops)
+                | vloc & (cause-base & (proxy-fence-ops^-1); cause-base; cause-base & proxy-fence-ops)
+                | loc & ([GEN]; cause-base; [F & ALIAS]; cause-base; [GEN])
+                | loc & (cause-base & (proxy-fence-ops^-1); cause-base; [F & ALIAS]; cause-base; [GEN])
+                | loc & ([GEN]; cause-base; [F & ALIAS]; cause-base; cause-base & proxy-fence-ops)
+                | loc & (cause-base & (proxy-fence-ops^-1); cause-base; [F & ALIAS]; cause-base; cause-base & proxy-fence-ops)
+
+(* 8.9.5 Causality order *)
+let cause = proxy-preserved-cause-base | (observation; proxy-preserved-cause-base)
+
+(* 8.7.2 Mixed-size data races: conflicting operations that overlap partially and are not ordered by causality.
+   The axioms do not apply to an execution with such a race; its reads still return values written by some write
+   (M16). ub relates all events if the execution has a mixed-size data race, and nothing otherwise. *)
+let conflict = (W * M) | (M * W)
+let mixed-size-race = (conflict & partial-overlap) \ (cause | cause^-1)
+let ub = (_ * _); mixed-size-race; (_ * _)
+flag ~empty mixed-size-race as mixed-size-data-race
+
+(******************************)
+(*  PTX Memory Model Axioms   *)
+(******************************)
+
+(* 8.10.1 Coherence *)
+empty ((([W]; cause; [W]) & loc) \ co) \ ub as axiom-Coherence
+// Morally strong overlapping writes are related by coherence order (8.9.6)
+empty ((([W]; morally-strong; [W]) & loc) \ (co | co^-1)) \ ub as axiom-Coherence2
+// Coherence order relates write operations: a morally strong pair of writes to several granules is ordered the
+// same way on all of them (M15)
+let ms-co = morally-strong & co
+irreflexive (ms-co; si; ms-co; si) \ ub as axiom-Coherence-granules
+
+(* 8.10.2 Fence-SC: causality order between fences is base causality order (M5) *)
+empty ((([F & SC]; cause-base; [F & SC]) & morally-strong) \ sync_fence) \ ub as axiom-FenceSC
+
+(* 8.10.3 Atomicity *)
+// Single-copy atomicity: a read does not read some granules from a morally strong write and others from
+// writes that precede it in coherence order (M15)
+irreflexive ((morally-strong & fr); si; (morally-strong & rf); si) \ ub as axiom-SingleCopyAtomicity
+// Atomicity of read-modify-write operations
+empty ((((morally-strong & fr); (morally-strong & co)) & rmw) \ ub) as axiom-Atomicity
+// 8.7.2: overlapping atomic operations whose scopes include each other are atomic also when they overlap
+// partially, and also in programs with mixed-size data races (M17)
+let atomic-pair = (ms-scope & same-proxy) \ id
+empty (((atomic-pair & fr); [range(rmw)]; (atomic-pair & co)) & rmw) as axiom-MixedSizeAtomicity
+
+(* 8.10.4 No-Thin-Air *)
+let dep = addr | data | ctrl
+acyclic (rf | dep) \ ub as axiom-NoThinAir
+
+(* 8.10.5 Sequential consistency per location, for morally strong operations (M7) *)
+acyclic (morally-strong & (po | rf | co | fr) & vloc) \ ub as axiom-ScPerLocation
+
+(* 8.10.6 Causality *)
+irreflexive ((rf | fr); cause) \ ub as axiom-Causality
