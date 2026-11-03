@@ -31,6 +31,20 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
   its tensor map and a register for the value read from it (M39-M46);
 - `m=multimem(x, y)` (M47); `wgmma.mma_async r, a, c` (M48); placement `,grid N` (M49).
 
+## Model files and verdicts
+
+- `ptx-v8.7-common.cat`: the relations of chapter 8 (no axioms);
+- `ptx-v8.7.cat`: the model: the common relations, the axioms of section 8.10, and two flags,
+  `mixed-size-data-race` and `undefined-behaviour`;
+- `ptx-v8.7-noaxioms.cat`: the common relations without the axioms of section 8.10, for programs with a mixed-size
+  data race (M16).
+
+The verdict of a test takes up to three runs (`scripts/ptx-v8.7-verdicts.sh`): `--property=program_spec` with
+`ptx-v8.7.cat`; `--property=cat_spec` with `ptx-v8.7.cat`, which reports the flags; if `undefined-behaviour` is
+flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is flagged, the verdict is the
+`program_spec` result with `ptx-v8.7-noaxioms.cat` (M16); otherwise it is the first result.
+`PTXv8_7-expected.csv` and `PTXv8_7-Kamui-expected.csv` hold the first result.
+
 ## Entries
 
 ### M1. The cluster of a thread placed without one
@@ -175,10 +189,13 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
 - **Manual.** 16927-16929: "Load read-only data into register variable d from the location specified by the source
   address operand a in the global state space, where the address is guaranteed to be the same across all threads
   in the warp."
-- **Alternatives.** (a) a weak generic read; (b) like `ld.global.nc`; (c) undefined if the location is written.
-- **Choice.** (a): unlike `ld.global.nc`, `ldu` is not excluded from the model by 6521, and it has no qualifier that
-  would make it strong. "Read-only" is read as a performance contract, not as a change of semantics.
-- **Tests.** `Kamui/kamui/ptx87/ld-st/MP+ldu`.
+- **Alternatives.** (a) a weak generic read; (b) like `ld.global.nc`: a weak read through the texture proxy (M10);
+  (c) undefined if the location is written.
+- **Choice.** (b). The manual only says "Load read-only data"; nothing promises that `ldu` sees data written while
+  the kernel runs, so the reading that promises nothing beyond the text is the one of `ld.global.nc`, the other load
+  of read-only data. A first version of the model chose (a), on the ground that `ldu` is not named by 6521.
+- **Cross-check.** Decided reading (b), shared decision D29 in kamui-isa's `models/ptx87/decisions.md`.
+- **Tests.** `Kamui/kamui/ptx87/ld-st/MP+ldu` (allowed; forbidden under (a)).
 
 ### M12. Cache operators, including `.ca`
 
@@ -250,12 +267,22 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
   location." 6803-6804: a data race is a pair of conflicting operations "not related in causality order and ... not
   morally strong".
 - **Alternatives.** (a) per execution: an execution with a mixed-size data race is not constrained by the axioms,
-  but its reads still return values written by some write; (b) per program: if any execution has such a race, no
-  execution is constrained; (c) reads may return any value.
-- **Choice.** (a). (b) quantifies over all executions, which an axiomatic check of one execution cannot express;
-  (c) contradicts 6511-6512, which holds "in the absence of any constraint". The model reports such races with the
-  flag `mixed-size-data-race` (`--property=cat_spec`).
-- **Tests.** `Kamui/kamui/ptx87/sizes/mixed-size+race` (forbidden: no write of 7), `mixed-size+flag`.
+  but its reads still return values written by some write; (b) per program: if one execution that satisfies the
+  axioms has such a race, no execution of the program is constrained by them, and reads still return written
+  values; (c) reads may return any value.
+- **Choice.** (b): 6811 says "if a PTX program contains". (c) contradicts 6511-6512, which is not one of the axioms
+  of section 8.10 and holds "in the absence of any constraint". One Dartagnan run checks one execution at a time, so
+  (b) takes two models: `ptx-v8.7.cat` keeps the axioms and flags the race (`mixed-size-data-race`, seen with
+  `--property=cat_spec`); a program with a flagged race is decided with `ptx-v8.7-noaxioms.cat`, which has none of
+  the axioms of section 8.10 but keeps the atomicity of 8.7.2 (M17: it holds "in any program with or without
+  mixed-size data-races"). Reads come from writes in every Dartagnan execution, so nothing else is needed. A first
+  version of the model chose (a), with the axioms switched off in the racy execution only.
+- **Limitation.** A `cat_spec` run reports the flags of one execution. A test where a mixed-size data race and
+  undefined behaviour (M35) happen in different executions could show only one of them; no test in the corpus
+  combines locations with several granules with mbarrier objects or wgmma.
+- **Cross-check.** Decided reading (b), shared decision D38 in kamui-isa's `models/ptx87/decisions.md`.
+- **Tests.** `Kamui/kamui/ptx87/sizes/mixed-size+race` (flagged; forbidden, no write of 7), `mixed-size+flag`
+  (flagged; `program_spec` forbidden, allowed without the axioms).
 
 ### M17. Atomicity of mixed-size read-modify-write operations
 
@@ -388,6 +415,7 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
 - **Choice.** (a): the ordering is uni-directional and 22662-22664 pairs the release fence with the acquire fence.
   The acquire fence's address range is not modelled: it orders tensormap reads of every location (the tests use a
   single tensor map).
+- **Cross-check.** Reading (a) kept, shared decision D37 in kamui-isa's `models/ptx87/decisions.md`.
 - **Tests.** `Kamui/kamui/ptx87/tensormap/*` (decided with the tensor copies).
 
 ### M27. Proxy-preserved base causality for proxies other than generic and alias
@@ -542,13 +570,16 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
 - **Manual.** 23925-23926, 24224-24225 (operations on an object that is not valid are undefined).
 - **Alternatives.** (a) the axioms do not apply to such an execution; (b) the execution is reported (flag
   `undefined-behaviour` with `--property=cat_spec`) and still constrained by the axioms.
-- **Choice.** (b). Whether the object is valid depends on the value the operation reads. With (a), an execution in
-  which an arrive reads a stale invalid state (after `mbarrier.init` in the same thread) would make itself undefined
-  and thereby allow the stale read: the axioms would never constrain mbarrier objects initialized in a thread. A
-  mixed-size data race is different: it is defined by causality, not by a value. Values still come from writes, so
-  `r0 == 7` outcomes stay forbidden.
-- **Tests.** `Kamui/kamui/ptx87/mbarrier-init/mbarrier-init+same-thread` (forbidden; allowed under (a)),
-  `mbarrier-init+inval+use` (forbidden, flagged).
+- **Choice.** (b) in the model. Whether the object is valid depends on the value the operation reads. With (a), an
+  execution in which an arrive reads a stale invalid state (after `mbarrier.init` in the same thread) would make
+  itself undefined and thereby allow the stale read. Undefined behaviour has no limit (23925-23926: "results in
+  undefined behavior"), so a test whose `cat_spec` run flags `undefined-behaviour` is allowed. The flag is looked
+  for only in executions that satisfy the axioms, so a stale read cannot justify itself.
+- **Cross-check.** Decided reading: any outcome when an execution that satisfies the axioms has the misuse, shared
+  decision D7 in kamui-isa's `models/ptx87/decisions.md`.
+- **Tests.** `Kamui/kamui/ptx87/mbarrier-init/mbarrier-init+same-thread` (forbidden, not flagged),
+  `mbarrier-init+inval+use` and `mbarrier-init+no-fence+cluster-barrier` (`program_spec` forbidden, flagged:
+  allowed).
 
 ### M36. Restricted fences
 
@@ -755,10 +786,9 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
 - **Choice.** In the dialect `wgmma.mma_async r, a, c` reads the shared locations `a` and `c` in the async proxy (`r`
   gets the value of `a`). It is ordered only after prior fences, so a prior generic write reaches it only through
   `fence.proxy.async`. `wgmma.commit_group`/`wait_group` form wgmma async-groups (M40). A `wgmma.mma_async` without a
-  prior `wgmma.fence` in its thread is undefined behaviour that does not depend on values, so the axioms do not
-  apply to such an execution (M51).
+  prior `wgmma.fence` in its thread is undefined behaviour that does not depend on values; it is flagged (M51).
 - **Tests.** `Kamui/kamui/ptx87/wgmma/*` (`wgmma+fence.proxy.async+wgmma.fence` forbidden, `wgmma+no-proxy-fence`
-  and `wgmma+no-wgmma.fence` allowed).
+  allowed, `wgmma+no-wgmma.fence` flagged: allowed).
 
 ### M49. griddepcontrol
 
@@ -789,10 +819,11 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
 
 - **Question.** M35 keeps the axioms for undefined behaviour detected from values read. What about undefined
   behaviour visible in the program text?
-- **Choice.** A missing `wgmma.fence` (M48) is undefined behaviour of every execution that reaches the
-  `wgmma.mma_async`; it cannot justify itself, so the axioms do not apply to such executions (as for mixed-size data
-  races, M16), and reads still return written values. It is also reported by the `undefined-behaviour` flag.
-- **Tests.** `Kamui/kamui/ptx87/wgmma/wgmma+no-wgmma.fence` (allowed; forbidden if the axioms applied).
+- **Choice.** The same as M35: a missing `wgmma.fence` (M48) executes an event tagged `UB_STATIC`; the axioms still
+  apply, the execution is reported by the `undefined-behaviour` flag, and a flagged test is allowed. A first version
+  of the model switched the axioms off in such executions instead.
+- **Cross-check.** Decided reading as M35, shared decision D7 in kamui-isa's `models/ptx87/decisions.md`.
+- **Tests.** `Kamui/kamui/ptx87/wgmma/wgmma+no-wgmma.fence` (`program_spec` forbidden, flagged: allowed).
 
 ## Tests Dartagnan cannot decide
 
