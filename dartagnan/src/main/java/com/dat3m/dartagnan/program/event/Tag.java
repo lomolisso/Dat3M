@@ -293,6 +293,8 @@ public final class Tag {
         public static final String ALIAS = "ALIAS";
         // Barrier Mode
         public static final String ARRIVE = "__ARRIVE";
+        // barrier.cluster.arrive and barrier.cluster.wait
+        public static final String BAR_CLUSTER = "BAR_CLUSTER";
 
         public static String loadMO(String mo) {
             return switch (mo) {

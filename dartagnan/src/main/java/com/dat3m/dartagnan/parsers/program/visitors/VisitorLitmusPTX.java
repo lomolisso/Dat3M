@@ -42,6 +42,10 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     private final PTXStateSpaces spaces = new PTXStateSpaces();
     private int mainThread;
     private int threadCount = 0;
+    // Number of barrier instructions of each kind executed so far by each thread (thread -> kind -> count)
+    private final Map<Integer, Map<String, Integer>> barrierCounts = new HashMap<>();
+    // Ids of the clusters of threads placed without one
+    private static final int IMPLICIT_CLUSTER = 1_000_000;
 
     private static final Set<String> LOAD_SEMS = Set.of("weak", "relaxed", "acquire", "volatile", "mmio");
     private static final Set<String> STORE_SEMS = Set.of("weak", "relaxed", "release", "volatile", "mmio");
@@ -159,7 +163,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             int ctaID = scopeID.ctaID().id;
             int gpuID = scopeID.gpuID().id;
             // Without a cluster, each CTA forms its own cluster (an implicit 1x1x1 cluster launch).
-            int clusterID = scopeID.clusterID() != null ? scopeID.clusterID().id : -2 - ctaID;
+            int clusterID = scopeID.clusterID() != null ? scopeID.clusterID().id : IMPLICIT_CLUSTER + ctaID;
             // NB: the order of scopeIDs is important
             programBuilder.newScopedThread(Arch.PTX, threadScopeContext.threadId().id, gpuID, clusterID, ctaID);
             spaces.addThread(threadCount, gpuID, clusterID, ctaID);
@@ -235,7 +239,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             case "atom", "suatom" -> parseAtom(qualifiers, operands);
             case "red", "sured" -> parseRed(qualifiers, operands);
             case "fence", "membar" -> parseFence(qualifiers, operands);
-            case "bar" -> parseBarrier(qualifiers, operands);
+            case "bar", "barrier" -> parseBarrier(qualifiers, operands);
             case "prefetch", "prefetchu", "applypriority" -> parseCacheControl(qualifiers, operands);
             case "createpolicy" -> parseCreatePolicy(qualifiers, operands);
             case "cp" -> parseCopy(qualifiers, operands);
@@ -508,11 +512,21 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         return List.of(fence);
     }
 
-    // bar.cta.sync id{, barrier{, count}} and bar.cta.arrive, with an instance id first
     private List<Event> parseBarrier(PTXQualifiers q, List<OperandContext> operands) {
-        if (!q.take("cta")) {
-            throw new ParsingException("Unsupported instruction " + q.getMnemonic());
+        if (q.getName().equals("bar") && q.takeFirst("cta")) {
+            return parseCtaBarrier(q, operands);
         }
+        if (q.getName().equals("bar") && q.takeFirst("warp")) {
+            return parseWarpBarrier(q, operands);
+        }
+        if (q.getName().equals("barrier") && q.takeFirst("cluster")) {
+            return parseClusterBarrier(q, operands);
+        }
+        return parseNamedBarrier(q, operands);
+    }
+
+    // The dialect's bar.cta.sync id{, barrier{, count}} and bar.cta.arrive, whose first operand is an instance id
+    private List<Event> parseCtaBarrier(PTXQualifiers q, List<OperandContext> operands) {
         final String mode = q.takeOne(Set.of("sync", "arrive"));
         q.checkConsumed();
         if (mode == null || operands.isEmpty() || operands.size() > 3) {
@@ -531,6 +545,87 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             barrier.addTags(Tag.PTX.ARRIVE);
         }
         return List.of(barrier);
+    }
+
+    // bar.sync a{, b}, bar.arrive a, b, barrier{.cta}.sync{.aligned} a{, b}, barrier{.cta}.arrive{.aligned} a, b:
+    // a is the barrier (0 to 15), b the number of participating threads (all threads of the CTA without b).
+    // The k-th use of a barrier by a thread belongs to the k-th instance of the barrier.
+    private List<Event> parseNamedBarrier(PTXQualifiers q, List<OperandContext> operands) {
+        if (q.getName().equals("barrier")) {
+            q.take("cta");
+            q.take("aligned");
+        }
+        final String mode = q.takeOne(Set.of("sync", "arrive"));
+        q.checkConsumed();
+        if (mode == null || operands.isEmpty() || operands.size() > 2 || (mode.equals("arrive") && operands.size() != 2)) {
+            throw q.error("Expected sync with a barrier and an optional thread count, or arrive with both");
+        }
+        if (operands.get(0).constant().size() != 1) {
+            throw q.error("The barrier must be a constant");
+        }
+        final int resource = Integer.parseInt(operands.get(0).getText());
+        if (resource < 0 || resource > 15) {
+            throw q.error("Barriers are numbered 0 to 15");
+        }
+        final Expression id = expressions.makeValue(resource, archType);
+        final Expression quorum = operands.size() > 1 ? parseSingleValue(q, operands.get(1)) : null;
+        final String instanceId = "bar" + resource + "#" + nextBarrierInstance("bar" + resource);
+        final Event barrier = EventFactory.newNamedBarrier(mode, instanceId, Tag.PTX.CTA, id, quorum);
+        if (mode.equals("arrive")) {
+            barrier.addTags(Tag.PTX.ARRIVE);
+        }
+        return List.of(barrier);
+    }
+
+    // bar.warp.sync mask: bit k of the mask is thread Pk; the threads of the mask synchronize.
+    private List<Event> parseWarpBarrier(PTXQualifiers q, List<OperandContext> operands) {
+        if (!q.take("sync")) {
+            throw new ParsingException("Unsupported instruction " + q.getMnemonic());
+        }
+        q.checkConsumed();
+        checkOperandCount(q, operands, 1);
+        if (operands.get(0).constant().size() != 1) {
+            throw q.error("The member mask must be a constant");
+        }
+        final long mask = Long.decode(operands.get(0).getText());
+        if ((mask & (1L << mainThread)) == 0) {
+            throw q.error("Thread P" + mainThread + " is not in the member mask");
+        }
+        for (int k = 0; k < 64; k++) {
+            if ((mask & (1L << k)) != 0 && (k >= threadCount || spaces.getCta(k) != spaces.getCta(mainThread))) {
+                throw q.error("The member mask names P" + k + ", which is not a thread of the CTA of P" + mainThread);
+            }
+        }
+        final String instanceId = "warp" + mask + "#" + nextBarrierInstance("warp" + mask);
+        return List.of(EventFactory.newNamedBarrier("warp_sync", instanceId, Tag.PTX.CTA,
+                expressions.makeValue(mask, archType), expressions.makeValue(Long.bitCount(mask), archType)));
+    }
+
+    // barrier.cluster.arrive{.release,.relaxed}{.aligned} and barrier.cluster.wait{.acquire}{.aligned}: the k-th
+    // arrive and the k-th wait of every thread of the cluster belong to the k-th instance of the cluster barrier.
+    private List<Event> parseClusterBarrier(PTXQualifiers q, List<OperandContext> operands) {
+        checkOperandCount(q, operands, 0);
+        final String mode = q.takeOne(Set.of("arrive", "wait"));
+        q.take("aligned");
+        final String sem = mode == null ? null
+                : q.takeOne(mode.equals("arrive") ? Set.of("release", "relaxed") : Set.of("acquire"));
+        q.checkConsumed();
+        if (mode == null) {
+            throw q.error("Expected barrier.cluster.arrive or barrier.cluster.wait");
+        }
+        final String instanceId = "cluster#" + nextBarrierInstance("cluster_" + mode);
+        final Event barrier = EventFactory.newControlBarrier("cluster_" + mode, instanceId, Tag.PTX.CLUSTER);
+        barrier.addTags(Tag.PTX.BAR_CLUSTER, Tag.PTX.CLUSTER);
+        if (mode.equals("arrive")) {
+            barrier.addTags(Tag.PTX.ARRIVE, parseMo(defaultIfNull(sem, "release")));
+        } else {
+            barrier.addTags(Tag.PTX.ACQ);
+        }
+        return List.of(barrier);
+    }
+
+    private int nextBarrierInstance(String kind) {
+        return barrierCounts.computeIfAbsent(mainThread, t -> new HashMap<>()).merge(kind, 1, Integer::sum) - 1;
     }
 
     // ----------------------------------------------------------------------------------------------------------------
