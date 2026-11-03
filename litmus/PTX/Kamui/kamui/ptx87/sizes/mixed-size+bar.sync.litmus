@@ -1,0 +1,11 @@
+PTX mixed-size+bar.sync
+{
+x[0]=0;
+x[1]=0;
+P1:r0=0;
+}
+ P0@cta 0,gpu 0   | P1@cta 0,gpu 0       ;
+ st.weak.b32 x, 1 | bar.sync 0           ;
+ bar.sync 0       | ld.weak.b16 r0, x[1] ;
+exists
+(P1:r0 == 0)

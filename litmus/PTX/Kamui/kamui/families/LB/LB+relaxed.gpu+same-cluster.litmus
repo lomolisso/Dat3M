@@ -1,0 +1,12 @@
+PTX LB+relaxed.gpu+same-cluster
+{
+x=0;
+y=0;
+P0:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 0,gpu 0 ;
+ ld.relaxed.gpu r0, x     | ld.relaxed.gpu r1, y     ;
+ st.relaxed.gpu y, 1      | st.relaxed.gpu x, 1      ;
+exists
+(P0:r0 == 1 /\ P1:r1 == 1)

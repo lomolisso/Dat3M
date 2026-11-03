@@ -1,0 +1,19 @@
+PTX cp.async+wait_group-1+older
+{
+g=1;
+h=1;
+d=0 @cta 0;
+e=0 @cta 0;
+P0:r0=0;
+P0:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0       ;
+ cp.async.ca.shared.global d, g ;
+ cp.async.commit_group          ;
+ cp.async.ca.shared.global e, h ;
+ cp.async.commit_group          ;
+ cp.async.wait_group 1          ;
+ ld.weak.shared r0, d           ;
+ ld.weak.shared r1, e           ;
+exists
+(P0:r0 == 0)

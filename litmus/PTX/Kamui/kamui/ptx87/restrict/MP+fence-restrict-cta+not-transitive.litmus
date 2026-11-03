@@ -1,0 +1,15 @@
+PTX MP+fence-restrict-cta+not-transitive
+{
+s=0 @cta 0;
+d=0;
+f=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                         | P1@cta 1,cluster 0,gpu 0 ;
+ st.weak.global d, 1                              | ld.relaxed.cluster r0, f ;
+ st.weak.shared::cta s, 1                         | fence.acq_rel.cluster    ;
+ fence.release.sync_restrict::shared::cta.cluster | ld.weak.global r1, d     ;
+ st.relaxed.cluster f, 1                          |                          ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

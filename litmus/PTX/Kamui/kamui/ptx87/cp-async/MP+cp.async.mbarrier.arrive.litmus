@@ -1,0 +1,13 @@
+PTX MP+cp.async.mbarrier.arrive
+{
+g=1;
+d=0 @cta 0;
+b=mbarrier(1) @cta 0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                | P1@cta 0,cluster 0,gpu 0                       ;
+ cp.async.ca.shared.global d, g          | mbarrier.test_wait.parity.acquire.cta r0, b, 0 ;
+ cp.async.mbarrier.arrive.noinc.shared b | ld.weak.shared r1, d                           ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

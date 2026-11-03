@@ -1,0 +1,22 @@
+PTX TMA-store+wait_group-1+older
+{
+s=0 @cta 0;
+t=0 @cta 0;
+g=0;
+h=0;
+P0:r0=0;
+P0:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                         ;
+ st.weak.shared::cta s, 1                         ;
+ st.weak.shared::cta t, 1                         ;
+ fence.proxy.async.shared::cta                    ;
+ cp.async.bulk.global.shared::cta.bulk_group g, s ;
+ cp.async.bulk.commit_group                       ;
+ cp.async.bulk.global.shared::cta.bulk_group h, t ;
+ cp.async.bulk.commit_group                       ;
+ cp.async.bulk.wait_group 1                       ;
+ ld.weak.global r0, g                             ;
+ ld.weak.global r1, h                             ;
+exists
+(P0:r0 == 0)

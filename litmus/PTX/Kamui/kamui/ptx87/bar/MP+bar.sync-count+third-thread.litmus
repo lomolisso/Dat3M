@@ -1,0 +1,11 @@
+PTX MP+bar.sync-count+third-thread
+{
+x=0;
+P1:r0=0;
+P2:r1=0;
+}
+ P0@cta 0,gpu 0 | P1@cta 0,gpu 0 | P2@cta 0,gpu 0 ;
+ st.weak x, 1   | bar.sync 1, 2  | ld.weak r1, x  ;
+ bar.sync 1, 2  | ld.weak r0, x  |                ;
+exists
+(P1:r0 == 1 /\ P2:r1 == 0)

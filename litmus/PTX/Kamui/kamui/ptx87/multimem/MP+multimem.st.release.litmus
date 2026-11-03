@@ -1,0 +1,14 @@
+PTX MP+multimem.st.release
+{
+x=0;
+y=0;
+m=multimem(x, y);
+d=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,gpu 0                          | P1@cta 0,gpu 1              ;
+ st.weak.global d, 1                     | ld.acquire.sys.global r0, y ;
+ multimem.st.release.sys.global.u32 m, 1 | ld.weak.global r1, d        ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

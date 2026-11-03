@@ -1,0 +1,13 @@
+PTX MP+fence-restrict-cta+shared
+{
+s=0 @cta 0;
+f=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                         | P1@cta 1,cluster 0,gpu 0      ;
+ st.weak.shared::cta s, 1                         | ld.relaxed.cluster r0, f      ;
+ fence.release.sync_restrict::shared::cta.cluster | fence.acq_rel.cluster         ;
+ st.relaxed.cluster f, 1                          | ld.weak.shared::cluster r1, s ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

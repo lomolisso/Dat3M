@@ -1,0 +1,11 @@
+PTX MP+bar.warp.sync+non-member
+{
+x=0;
+P1:r0=0;
+P2:r1=0;
+}
+ P0@cta 0,gpu 0  | P1@cta 0,gpu 0  | P2@cta 0,gpu 0 ;
+ st.weak x, 1    | bar.warp.sync 3 | ld.weak r1, x  ;
+ bar.warp.sync 3 | ld.weak r0, x   |                ;
+exists
+(P2:r1 == 0)

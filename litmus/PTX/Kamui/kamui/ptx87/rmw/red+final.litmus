@@ -1,0 +1,8 @@
+PTX red+final
+{
+x=0;
+}
+ P0@cta 0,gpu 0           | P1@cta 1,gpu 0           ;
+ red.relaxed.gpu.add x, 1 | red.relaxed.gpu.add x, 1 ;
+exists
+(x != 2)

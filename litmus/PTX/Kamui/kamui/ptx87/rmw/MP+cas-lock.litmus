@@ -1,0 +1,12 @@
+PTX MP+cas-lock
+{
+x=0;
+l=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,gpu 0      | P1@cta 1,gpu 0                   ;
+ st.weak x, 1        | atom.acquire.gpu.cas r0, l, 1, 2 ;
+ st.release.gpu l, 1 | ld.weak r1, x                    ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

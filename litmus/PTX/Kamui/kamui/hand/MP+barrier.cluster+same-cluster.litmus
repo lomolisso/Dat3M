@@ -1,0 +1,11 @@
+PTX MP+barrier.cluster+same-cluster
+{
+x=0;
+P1:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 0,gpu 0 ;
+ st.weak x, 1             | barrier.cluster.arrive   ;
+ barrier.cluster.arrive   | barrier.cluster.wait     ;
+ barrier.cluster.wait     | ld.weak r0, x            ;
+exists
+(P1:r0 == 0)

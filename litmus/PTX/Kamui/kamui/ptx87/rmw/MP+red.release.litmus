@@ -1,0 +1,12 @@
+PTX MP+red.release
+{
+x=0;
+f=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,gpu 0           | P1@cta 1,gpu 0       ;
+ st.weak x, 1             | ld.acquire.gpu r0, f ;
+ red.release.gpu.add f, 1 | ld.weak r1, x        ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

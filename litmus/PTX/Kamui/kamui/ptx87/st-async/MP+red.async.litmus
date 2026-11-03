@@ -1,0 +1,13 @@
+PTX MP+red.async
+{
+d=2 @cta 1;
+b=mbarrier(1) @cta 1;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                               | P1@cta 1,cluster 0,gpu 0                           ;
+ red.async.relaxed.cluster.shared::cluster.mbarrier::complete_tx::bytes.add.u32 d, 1, b | mbarrier.arrive.expect_tx.release.cta b, 1         ;
+                                                                                        | mbarrier.test_wait.parity.acquire.cluster r0, b, 0 ;
+                                                                                        | ld.weak.shared::cta r1, d                          ;
+exists
+(P1:r0 == 1 /\ P1:r1 != 3)

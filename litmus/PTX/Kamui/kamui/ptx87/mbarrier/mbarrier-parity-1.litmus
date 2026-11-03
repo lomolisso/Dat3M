@@ -1,0 +1,10 @@
+PTX mbarrier-parity-1
+{
+b=mbarrier(1) @cta 0;
+P0:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0                       ;
+ mbarrier.arrive.release.cta b                  ;
+ mbarrier.test_wait.parity.acquire.cta r0, b, 1 ;
+exists
+(P0:r0 == 1)

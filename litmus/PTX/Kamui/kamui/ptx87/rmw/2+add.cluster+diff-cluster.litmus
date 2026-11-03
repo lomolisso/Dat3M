@@ -1,0 +1,10 @@
+PTX 2+add.cluster+diff-cluster
+{
+x=0;
+P0:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0          | P1@cta 1,cluster 1,gpu 0          ;
+ atom.relaxed.cluster.add r0, x, 1 | atom.relaxed.cluster.add r1, x, 1 ;
+exists
+(P0:r0 == 0 /\ P1:r1 == 0)

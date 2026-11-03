@@ -1,0 +1,14 @@
+PTX MP+st.async+not-transitive
+{
+d=0 @cta 1;
+h=0;
+b=mbarrier(1) @cta 1;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                          | P1@cta 1,cluster 0,gpu 0                           ;
+ st.weak.global h, 1                                               | mbarrier.arrive.expect_tx.release.cta b, 1         ;
+ st.async.shared::cluster.mbarrier::complete_tx::bytes.b32 d, 1, b | mbarrier.test_wait.parity.acquire.cluster r0, b, 0 ;
+                                                                   | ld.weak.global r1, h                               ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

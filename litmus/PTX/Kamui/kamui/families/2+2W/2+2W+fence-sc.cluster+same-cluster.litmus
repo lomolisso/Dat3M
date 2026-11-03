@@ -1,0 +1,11 @@
+PTX 2+2W+fence-sc.cluster+same-cluster
+{
+x=0;
+y=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 0,gpu 0 ;
+ st.relaxed.cluster x, 1  | st.relaxed.cluster y, 1  ;
+ fence.sc.cluster         | fence.sc.cluster         ;
+ st.relaxed.cluster y, 2  | st.relaxed.cluster x, 2  ;
+exists
+(x == 1 /\ y == 1)

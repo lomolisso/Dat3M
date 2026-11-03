@@ -1,0 +1,14 @@
+PTX IRIW+rel-acq.cta+same-cta
+{
+x=0;
+y=0;
+P2:r0=0;
+P2:r1=0;
+P3:r2=0;
+P3:r3=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 0,cluster 0,gpu 0 | P2@cta 0,cluster 0,gpu 0 | P3@cta 0,cluster 0,gpu 0 ;
+ st.release.cta x, 1      | st.release.cta y, 1      | ld.acquire.cta r0, x     | ld.acquire.cta r2, y     ;
+                          |                          | ld.acquire.cta r1, y     | ld.acquire.cta r3, x     ;
+exists
+(P2:r0 == 1 /\ P2:r1 == 0 /\ P3:r2 == 1 /\ P3:r3 == 0)

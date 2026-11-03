@@ -1,0 +1,13 @@
+PTX SB+fence-sc.cta+same-cluster
+{
+x=0;
+y=0;
+P0:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 0,gpu 0 ;
+ st.relaxed.cta x, 1      | st.relaxed.cta y, 1      ;
+ fence.sc.cta             | fence.sc.cta             ;
+ ld.relaxed.cta r0, y     | ld.relaxed.cta r1, x     ;
+exists
+(P0:r0 == 0 /\ P1:r1 == 0)

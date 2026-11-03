@@ -1,0 +1,13 @@
+PTX MP+barrier.cluster+async-copy
+{
+g=5;
+d=0 @cta 1;
+b=mbarrier(1) @cta 1;
+P1:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                  | P1@cta 1,cluster 0,gpu 0  ;
+ cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes d, g, b | barrier.cluster.arrive    ;
+ barrier.cluster.arrive                                                    | barrier.cluster.wait      ;
+ barrier.cluster.wait                                                      | ld.weak.shared::cta r0, d ;
+exists
+(P1:r0 == 0)

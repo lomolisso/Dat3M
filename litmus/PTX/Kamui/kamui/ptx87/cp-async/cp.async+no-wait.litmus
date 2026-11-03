@@ -1,0 +1,12 @@
+PTX cp.async+no-wait
+{
+g=0;
+d=0 @cta 0;
+P0:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0       ;
+ st.weak.global g, 1            ;
+ cp.async.ca.shared.global d, g ;
+ ld.weak.shared r0, d           ;
+exists
+(P0:r0 == 0)

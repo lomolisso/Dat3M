@@ -1,0 +1,17 @@
+PTX MP_cta_synonym+19
+{
+x=0;
+y @ generic aliases x;
+c @ surface aliases x;
+s @ surface aliases y;
+t @ texture aliases y;
+flag=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,gpu 0         | P1@cta 0,gpu 0          ;
+ st.weak x, 2           | ld.acquire.cta r0, flag ;
+ st.release.cta flag, 1 | fence.proxy.alias       ;
+                        | ld.weak r1, y           ;
+exists
+(P1:r0 == 1 /\ ~(P1:r1 == 2))

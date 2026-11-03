@@ -1,0 +1,13 @@
+PTX MP+fence-restrict-cluster+global
+{
+d=0;
+f=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 0,gpu 0                             ;
+ st.weak.global d, 1      | ld.relaxed.cluster r0, f                             ;
+ fence.acq_rel.cluster    | fence.acquire.sync_restrict::shared::cluster.cluster ;
+ st.relaxed.cluster f, 1  | ld.weak.global r1, d                                 ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

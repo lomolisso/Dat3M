@@ -1,0 +1,10 @@
+PTX 2+2W+relaxed.cluster+diff-cluster
+{
+x=0;
+y=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 1,gpu 0 ;
+ st.relaxed.cluster x, 1  | st.relaxed.cluster y, 1  ;
+ st.relaxed.cluster y, 2  | st.relaxed.cluster x, 2  ;
+exists
+(x == 1 /\ y == 1)

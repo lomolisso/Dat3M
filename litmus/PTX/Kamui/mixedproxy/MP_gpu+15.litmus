@@ -1,0 +1,15 @@
+PTX MP_gpu+15
+{
+x=0;
+t @ texture aliases x;
+s @ surface aliases x;
+flag=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,gpu 0         | P1@cta 1,gpu 0          ;
+ sust.weak s, 2         | ld.acquire.gpu r0, flag ;
+ st.release.gpu flag, 1 | fence.proxy.texture     ;
+                        | tld.weak r1, t          ;
+exists
+(P1:r0 == 1 /\ (P1:r1 != 2))

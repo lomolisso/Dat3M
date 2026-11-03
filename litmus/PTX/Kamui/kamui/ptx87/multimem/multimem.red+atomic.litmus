@@ -1,0 +1,10 @@
+PTX multimem.red+atomic
+{
+x=0;
+y=0;
+m=multimem(x, y);
+}
+ P0@cta 0,gpu 0                   | P1@cta 0,gpu 1                   ;
+ multimem.red.global.add.u32 m, 1 | multimem.red.global.add.u32 m, 1 ;
+exists
+(x != 2)

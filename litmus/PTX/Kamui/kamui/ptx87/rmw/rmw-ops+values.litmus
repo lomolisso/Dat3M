@@ -1,0 +1,16 @@
+PTX rmw-ops+values
+{
+x=5;
+P0:r0=0;
+}
+ P0@cta 0,gpu 0                 ;
+ atom.relaxed.gpu.inc r0, x, 5  ;
+ atom.relaxed.gpu.dec r0, x, 3  ;
+ atom.relaxed.gpu.max r0, x, 6  ;
+ atom.relaxed.gpu.and r0, x, 5  ;
+ atom.relaxed.gpu.or r0, x, 2   ;
+ atom.relaxed.gpu.xor r0, x, 1  ;
+ atom.relaxed.gpu.min r0, x, 9  ;
+ atom.relaxed.gpu.exch r0, x, 7 ;
+exists
+(P0:r0 != 7 \/ x != 7)

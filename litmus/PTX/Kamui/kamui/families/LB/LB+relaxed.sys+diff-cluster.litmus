@@ -1,0 +1,12 @@
+PTX LB+relaxed.sys+diff-cluster
+{
+x=0;
+y=0;
+P0:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 1,gpu 0 ;
+ ld.relaxed.sys r0, x     | ld.relaxed.sys r1, y     ;
+ st.relaxed.sys y, 1      | st.relaxed.sys x, 1      ;
+exists
+(P0:r0 == 1 /\ P1:r1 == 1)

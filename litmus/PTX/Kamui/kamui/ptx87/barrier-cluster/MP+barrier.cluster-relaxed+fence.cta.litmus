@@ -1,0 +1,12 @@
+PTX MP+barrier.cluster-relaxed+fence.cta
+{
+x=0;
+P1:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0       | P1@cta 1,cluster 0,gpu 0 ;
+ st.weak x, 1                   | barrier.cluster.arrive   ;
+ fence.acq_rel.cta              | barrier.cluster.wait     ;
+ barrier.cluster.arrive.relaxed | ld.weak r0, x            ;
+ barrier.cluster.wait           |                          ;
+exists
+(P1:r0 == 0)

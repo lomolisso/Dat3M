@@ -1,0 +1,17 @@
+PTX MP+tensormap.cp_fenceproxy
+{
+tms=1 @cta 0;
+tm=0;
+g=5;
+d=0 @cta 1;
+b=mbarrier(1) @cta 1;
+f=0;
+P1:r0=0;
+P1:r2=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                                            | P1@cta 1,cluster 0,gpu 0                                                                         ;
+ tensormap.cp_fenceproxy.global.shared::cta.tensormap::generic.release.gpu.sync.aligned tm, tms, 128 | ld.relaxed.gpu r0, f                                                                             ;
+ st.relaxed.gpu f, 1                                                                                 | fence.proxy.tensormap::generic.acquire.gpu tm, 128                                               ;
+                                                                                                     | cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes d, g, b, tm, r2 ;
+exists
+(P1:r0 == 1 /\ P1:r2 == 0)

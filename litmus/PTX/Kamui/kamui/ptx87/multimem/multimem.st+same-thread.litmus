@@ -1,0 +1,14 @@
+PTX multimem.st+same-thread
+{
+x=0;
+y=0;
+m=multimem(x, y);
+P0:r0=0;
+P0:r1=0;
+}
+ P0@cta 0,gpu 0                   ;
+ multimem.st.weak.global.u32 m, 1 ;
+ ld.weak.global r0, x             ;
+ ld.weak.global r1, y             ;
+exists
+(P0:r0 == 0 \/ P0:r1 == 0)

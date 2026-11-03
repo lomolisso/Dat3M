@@ -1,0 +1,14 @@
+PTX MP+st.wt
+{
+x=0;
+f=0;
+P1:r0=0;
+P1:r1=0;
+P1:r2=0;
+}
+ P0@cta 0,gpu 0         | P1@cta 1,gpu 0          ;
+ st.weak.global.wt x, 1 | ld.weak.global.ca r2, x ;
+ st.release.gpu f, 1    | ld.acquire.gpu r0, f    ;
+                        | ld.weak.global.ca r1, x ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

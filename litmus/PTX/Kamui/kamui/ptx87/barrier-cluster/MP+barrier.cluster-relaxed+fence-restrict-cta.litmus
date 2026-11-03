@@ -1,0 +1,12 @@
+PTX MP+barrier.cluster-relaxed+fence-restrict-cta
+{
+s=0 @cta 0;
+P1:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0                         | P1@cta 1,cluster 0,gpu 0      ;
+ st.weak.shared::cta s, 1                         | barrier.cluster.arrive        ;
+ fence.release.sync_restrict::shared::cta.cluster | barrier.cluster.wait          ;
+ barrier.cluster.arrive.relaxed                   | ld.weak.shared::cluster r0, s ;
+ barrier.cluster.wait                             |                               ;
+exists
+(P1:r0 == 0)

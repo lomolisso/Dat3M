@@ -1,0 +1,14 @@
+PTX mbarrier-init+op-restrict+data
+{
+b=mbarrier() @cta 0;
+d=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0            | P1@cta 1,cluster 0,gpu 0       ;
+ mbarrier.init.shared::cta b, 2      | barrier.cluster.arrive.relaxed ;
+ st.weak.global d, 1                 | barrier.cluster.wait           ;
+ fence.mbarrier_init.release.cluster | ld.weak.global r1, d           ;
+ barrier.cluster.arrive.relaxed      |                                ;
+ barrier.cluster.wait                |                                ;
+exists
+(P1:r1 == 0)

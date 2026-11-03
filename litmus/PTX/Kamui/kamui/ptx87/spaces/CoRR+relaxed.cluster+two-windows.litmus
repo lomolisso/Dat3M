@@ -1,0 +1,11 @@
+PTX CoRR+relaxed.cluster+two-windows
+{
+s=0 @cta 1;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                | P1@cta 1,cluster 0,gpu 0                 ;
+ st.relaxed.cluster.shared::cluster s, 1 | ld.relaxed.cluster.shared::cta r0, s     ;
+                                         | ld.relaxed.cluster.shared::cluster r1, s ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

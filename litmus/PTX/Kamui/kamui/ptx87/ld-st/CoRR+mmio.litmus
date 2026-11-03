@@ -1,0 +1,11 @@
+PTX CoRR+mmio
+{
+x=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,gpu 0                  | P1@cta 1,gpu 0                   ;
+ st.mmio.relaxed.sys.global x, 1 | ld.mmio.relaxed.sys.global r0, x ;
+                                 | ld.mmio.relaxed.sys.global r1, x ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

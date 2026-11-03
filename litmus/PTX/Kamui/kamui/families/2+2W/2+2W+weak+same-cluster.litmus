@@ -1,0 +1,10 @@
+PTX 2+2W+weak+same-cluster
+{
+x=0;
+y=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 0,gpu 0 ;
+ st.weak x, 1             | st.weak y, 1             ;
+ st.weak y, 2             | st.weak x, 2             ;
+exists
+(x == 1 /\ y == 1)

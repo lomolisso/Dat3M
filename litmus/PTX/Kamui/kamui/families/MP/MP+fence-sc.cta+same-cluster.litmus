@@ -1,0 +1,13 @@
+PTX MP+fence-sc.cta+same-cluster
+{
+x=0;
+y=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 0,gpu 0 ;
+ st.weak x, 1             | ld.relaxed.cta r0, y     ;
+ fence.sc.cta             | fence.sc.cta             ;
+ st.relaxed.cta y, 1      | ld.weak r1, x            ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

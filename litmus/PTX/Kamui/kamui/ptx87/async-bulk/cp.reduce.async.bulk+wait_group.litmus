@@ -1,0 +1,15 @@
+PTX cp.reduce.async.bulk+wait_group
+{
+s=0 @cta 0;
+g=2;
+P0:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                        ;
+ st.weak.shared::cta s, 1                                        ;
+ fence.proxy.async.shared::cta                                   ;
+ cp.reduce.async.bulk.global.shared::cta.bulk_group.add.u32 g, s ;
+ cp.async.bulk.commit_group                                      ;
+ cp.async.bulk.wait_group 0                                      ;
+ ld.weak.global r0, g                                            ;
+exists
+(P0:r0 != 3)

@@ -1,0 +1,13 @@
+PTX multimem.st+free-order
+{
+x=0;
+y=0;
+m=multimem(x, y);
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,gpu 0                          | P1@cta 0,gpu 1              ;
+ multimem.st.release.sys.global.u32 m, 1 | ld.acquire.sys.global r0, y ;
+                                         | ld.relaxed.sys.global r1, x ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

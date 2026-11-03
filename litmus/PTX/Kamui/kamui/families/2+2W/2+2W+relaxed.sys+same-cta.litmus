@@ -1,0 +1,10 @@
+PTX 2+2W+relaxed.sys+same-cta
+{
+x=0;
+y=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 0,cluster 0,gpu 0 ;
+ st.relaxed.sys x, 1      | st.relaxed.sys y, 1      ;
+ st.relaxed.sys y, 2      | st.relaxed.sys x, 2      ;
+exists
+(x == 1 /\ y == 1)

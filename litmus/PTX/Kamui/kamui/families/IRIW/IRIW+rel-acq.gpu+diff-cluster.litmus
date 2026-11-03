@@ -1,0 +1,14 @@
+PTX IRIW+rel-acq.gpu+diff-cluster
+{
+x=0;
+y=0;
+P2:r0=0;
+P2:r1=0;
+P3:r2=0;
+P3:r3=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 1,gpu 0 | P2@cta 2,cluster 2,gpu 0 | P3@cta 3,cluster 3,gpu 0 ;
+ st.release.gpu x, 1      | st.release.gpu y, 1      | ld.acquire.gpu r0, x     | ld.acquire.gpu r2, y     ;
+                          |                          | ld.acquire.gpu r1, y     | ld.acquire.gpu r3, x     ;
+exists
+(P2:r0 == 1 /\ P2:r1 == 0 /\ P3:r2 == 1 /\ P3:r3 == 0)

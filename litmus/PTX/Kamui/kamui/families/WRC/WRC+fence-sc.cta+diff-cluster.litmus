@@ -1,0 +1,14 @@
+PTX WRC+fence-sc.cta+diff-cluster
+{
+x=0;
+y=0;
+P1:r0=0;
+P2:r1=0;
+P2:r2=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 1,gpu 0 | P2@cta 2,cluster 2,gpu 0 ;
+ st.relaxed.cta x, 1      | ld.relaxed.cta r0, x     | ld.relaxed.cta r1, y     ;
+                          | fence.sc.cta             | fence.sc.cta             ;
+                          | st.relaxed.cta y, 1      | ld.relaxed.cta r2, x     ;
+exists
+(P1:r0 == 1 /\ P2:r1 == 1 /\ P2:r2 == 0)

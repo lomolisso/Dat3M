@@ -1,0 +1,15 @@
+PTX TMA-store+wait_group.read+source-reuse
+{
+s=0 @cta 0;
+g=0;
+}
+ P0@cta 0,cluster 0,gpu 0                         ;
+ st.weak.shared::cta s, 1                         ;
+ fence.proxy.async.shared::cta                    ;
+ cp.async.bulk.global.shared::cta.bulk_group g, s ;
+ cp.async.bulk.commit_group                       ;
+ cp.async.bulk.wait_group.read 0                  ;
+ st.weak.shared::cta s, 2                         ;
+ cp.async.bulk.wait_group 0                       ;
+exists
+(g == 2)

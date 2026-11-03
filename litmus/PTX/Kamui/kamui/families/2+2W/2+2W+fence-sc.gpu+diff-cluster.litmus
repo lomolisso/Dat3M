@@ -1,0 +1,11 @@
+PTX 2+2W+fence-sc.gpu+diff-cluster
+{
+x=0;
+y=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 1,gpu 0 ;
+ st.relaxed.gpu x, 1      | st.relaxed.gpu y, 1      ;
+ fence.sc.gpu             | fence.sc.gpu             ;
+ st.relaxed.gpu y, 2      | st.relaxed.gpu x, 2      ;
+exists
+(x == 1 /\ y == 1)
