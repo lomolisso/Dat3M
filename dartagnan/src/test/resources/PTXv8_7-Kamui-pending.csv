@@ -1,43 +1,6 @@
 // Kamui tests that use instructions the PTX 8.7 model does not support yet, by feature group.
 // LitmusPTXv8_7KamuiTest skips them.
 
-// barriers
-litmus/PTX/Kamui/kamui/ptx87/barrier-cluster/MP+barrier.cluster+async-copy.litmus
-
-// asynchronous operations
-litmus/PTX/Kamui/kamui/hand/CoWR+async-bulk+same-cta.litmus
-litmus/PTX/Kamui/kamui/hand/CoWR+fence.proxy.async+async-bulk+same-cta.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/2+cp.reduce.async.bulk.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-load+complete-tx-not-transitive.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-load+fence.proxy.async.global+source.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-load+fence.proxy.async.shared+source.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-load+mbarrier+other-thread+fence-acq.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-load+mbarrier+other-thread.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-load+mbarrier+same-thread+fence-acq.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-load+mbarrier+same-thread.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-load+release-arrive-orders-prior.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-load+stale-source.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-multicast.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-store+wait_group+release.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-store+wait_group-1+older.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-store+wait_group-1.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-store+wait_group.read+release.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/TMA-store+wait_group.read+source-reuse.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/cp.reduce.async.bulk+generic-atomic.litmus
-litmus/PTX/Kamui/kamui/ptx87/async-bulk/cp.reduce.async.bulk+wait_group.litmus
-litmus/PTX/Kamui/kamui/ptx87/cp-async/MP+cp.async.mbarrier.arrive+fence-acq.litmus
-litmus/PTX/Kamui/kamui/ptx87/cp-async/MP+cp.async.mbarrier.arrive+not-transitive.litmus
-litmus/PTX/Kamui/kamui/ptx87/cp-async/MP+cp.async.mbarrier.arrive.litmus
-litmus/PTX/Kamui/kamui/ptx87/cp-async/cp.async+no-wait.litmus
-litmus/PTX/Kamui/kamui/ptx87/cp-async/cp.async+wait_all.litmus
-litmus/PTX/Kamui/kamui/ptx87/cp-async/cp.async+wait_group-1+older.litmus
-litmus/PTX/Kamui/kamui/ptx87/cp-async/cp.async+wait_group-1.litmus
-litmus/PTX/Kamui/kamui/ptx87/cp-async/cp.async.mbarrier.arrive+inc.litmus
-litmus/PTX/Kamui/kamui/ptx87/st-async/MP+red.async.litmus
-litmus/PTX/Kamui/kamui/ptx87/st-async/MP+st.async+not-transitive.litmus
-litmus/PTX/Kamui/kamui/ptx87/st-async/MP+st.async.litmus
-litmus/PTX/Kamui/kamui/ptx87/st-async/MP+st.async.release.litmus
-
 // other instructions
 litmus/PTX/Kamui/kamui/ptx87/griddep/MP+griddepcontrol+no-wait.litmus
 litmus/PTX/Kamui/kamui/ptx87/griddep/MP+griddepcontrol.wait.litmus
