@@ -352,8 +352,8 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             for (int j = 0; j < slots.size(); j++) {
                 Event load = EventFactory.PTX.newLoad(registers.get(j), slots.get(j).address(), sem.mo);
                 sem.addTags(load);
-                // ld.global.nc reads through the non-coherent texture path
-                load.addTags(nonCoherent ? Tag.PTX.TEX : proxy);
+                // ld.global.nc and ldu read through the non-coherent texture path (M10, M11)
+                load.addTags(nonCoherent || unified ? Tag.PTX.TEX : proxy);
                 slots.get(j).addFootprint(load);
                 events.add(load);
             }
