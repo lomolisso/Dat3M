@@ -1,0 +1,13 @@
+PTX
+(* NVIDIA. Parallel Thread Execution ISA Version 8.7, chapter 8 (Memory Consistency Model), without its axioms *)
+
+// 8.7.2: "The axioms in the memory consistency model do not apply if a PTX program contains one or more mixed-size
+// data-races." This model decides such programs (M16): the axioms of section 8.10 are left out, and each read still
+// returns the value of some write or of the initial state (6511-6512), as in every
+// Dartagnan execution. A program has a mixed-size data race if ptx-v8.7.cat flags mixed-size-data-race.
+
+include "ptx-v8.7-common.cat"
+
+// 8.7.2: the atomicity of overlapping atomic operations whose scopes include each other holds "in any program with
+// or without mixed-size data-races" (M17)
+empty (((atomic-pair & fr); [range(rmw)]; (atomic-pair & co)) & rmw) as axiom-MixedSizeAtomicity

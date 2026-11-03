@@ -2,183 +2,16 @@ PTX
 (* NVIDIA. Parallel Thread Execution ISA Version 8.7, chapter 8 (Memory Consistency Model) *)
 
 // The choices this model makes where the manual leaves room for interpretation are described in ptx-v8.7.md
-// (entries M1, M2, ...). Section numbers below refer to the manual.
+// (entries M1, M2, ...). The definitions are in ptx-v8.7-common.cat.
 
-// Base relations:
-// vloc: same virtual address
-// sr: same scope (each event is strong and its scope includes the thread of the other)
-// scta: same CTA
-// syncbar: barriers on the same logical barrier resource
-// sync_fence: an order over the pairs of morally strong fence.sc operations
-// si: events of the same instruction (the elements of a vector access, the granules of a wide access)
+include "ptx-v8.7-common.cat"
 
-// Scope tags: CTA, CLUSTER, GPU, SYS
-// Proxy tags: GEN (generic), SUR (surface), TEX (texture, also ld.global.nc, M10), CON (constant), ASYNC (async),
-//             TMAP (tensormap); TMAP_FENCE: fence.proxy.tensormap::generic (M26)
-// State space tags: GLOBAL, SHARED, SHARED_CTA (shared memory of the accessing thread's CTA), LOCAL, CONST, PARAM
-// Other tags: VOL (volatile), MMIO (mmio), both also RLX and SYS (M8, M9);
-//             WHOLE / PART: the access covers every granule / a single granule of a location with several (M14)
-//             MBAR: an access to an mbarrier object (M32), MBAR_INIT: mbarrier.init; UB: undefined behaviour
-
-(*******************)
-(*   Auxiliaries   *)
-(*******************)
-
-// 8.2.4: the operations of one instruction are performed in an unspecified order (M15, M18): Dartagnan's po does
-// not order events of the same instruction (si)
-let po-text = po
-let po0 = po-text
-// 8.9.1.1: asynchronous operations (AOP) are not in program order (M39). Their own accesses are ordered (read,
-// write, complete-tx; the events of the k-th asynchronous operation carry the tag AOPk); a wait orders the operations of the async-groups it completes before itself (M40); the
-// arrive-on of cp.async.mbarrier.arrive follows all prior cp.async of its thread (6894-6896).
-let async-internal = ([AOP0]; po-text; [AOP0]) | ([AOP1]; po-text; [AOP1]) | ([AOP2]; po-text; [AOP2]) | ([AOP3]; po-text; [AOP3]) |
-                     ([AOP4]; po-text; [AOP4]) | ([AOP5]; po-text; [AOP5]) | ([AOP6]; po-text; [AOP6]) | ([AOP7]; po-text; [AOP7]) |
-                     ([AOP8]; po-text; [AOP8]) | ([AOP9]; po-text; [AOP9]) | ([AOP10]; po-text; [AOP10]) | ([AOP11]; po-text; [AOP11]) |
-                     ([AOP12]; po-text; [AOP12]) | ([AOP13]; po-text; [AOP13]) | ([AOP14]; po-text; [AOP14]) | ([AOP15]; po-text; [AOP15])
-let completion = ([AOP & AG0]; po0; [WAIT_AG0]) | ([AOP & BAG0]; po0; [WAIT_BAG0])
-                 | ([AOP & BAG0 & R & ~RMW]; po0; [WAITR_BAG0])
-                 | ([AOP & AG1]; po0; [WAIT_AG1]) | ([AOP & BAG1]; po0; [WAIT_BAG1])
-                 | ([AOP & BAG1 & R & ~RMW]; po0; [WAITR_BAG1])
-                 | ([AOP & AG2]; po0; [WAIT_AG2]) | ([AOP & BAG2]; po0; [WAIT_BAG2])
-                 | ([AOP & BAG2 & R & ~RMW]; po0; [WAITR_BAG2])
-                 | ([AOP & AG3]; po0; [WAIT_AG3]) | ([AOP & BAG3]; po0; [WAIT_BAG3])
-                 | ([AOP & BAG3 & R & ~RMW]; po0; [WAITR_BAG3])
-                 | ([AOP & AG4]; po0; [WAIT_AG4]) | ([AOP & BAG4]; po0; [WAIT_BAG4])
-                 | ([AOP & BAG4 & R & ~RMW]; po0; [WAITR_BAG4])
-                 | ([AOP & AG5]; po0; [WAIT_AG5]) | ([AOP & BAG5]; po0; [WAIT_BAG5])
-                 | ([AOP & BAG5 & R & ~RMW]; po0; [WAITR_BAG5])
-                 | ([AOP & AG6]; po0; [WAIT_AG6]) | ([AOP & BAG6]; po0; [WAIT_BAG6])
-                 | ([AOP & BAG6 & R & ~RMW]; po0; [WAITR_BAG6])
-                 | ([AOP & AG7]; po0; [WAIT_AG7]) | ([AOP & BAG7]; po0; [WAIT_BAG7])
-                 | ([AOP & BAG7 & R & ~RMW]; po0; [WAITR_BAG7])
-                 | ([AOP & WG0]; po0; [WAIT_WG0]) | ([AOP & WG1]; po0; [WAIT_WG1])
-                 | ([AOP & WG2]; po0; [WAIT_WG2]) | ([AOP & WG3]; po0; [WAIT_WG3])
-                 | ([AOP & WG4]; po0; [WAIT_WG4]) | ([AOP & WG5]; po0; [WAIT_WG5])
-                 | ([AOP & WG6]; po0; [WAIT_WG6]) | ([AOP & WG7]; po0; [WAIT_WG7])
-let cpasync-arrive-order = [AOP & CPASYNC]; po0; [CPASYNC_ARRIVE]
-let po = ((po0 \ ((AOP * _) | (_ * AOP))) | async-internal | completion | cpasync-arrive-order)+
-// An asynchronous operation is ordered after the prior instructions of its thread (6886), but this order does not
-// extend through it to other operations (6899-6901): it is only used to reach the operation's own accesses.
-// wgmma.mma_async is not ordered after prior instructions (6886-6887) except through a fence (32614-32618, M48)
-let issue = ([~AOP]; po0; [AOP & ~WGMMA]) | ([F]; po0; [AOP & WGMMA])
-
-// Coherence order is a partial transitive order (8.9.6); recompute fr from it
-let co = co+
-let fr = rf^-1; co
-
-(* 8.4 Operation types *)
-let strong-write = W & (RLX | REL)
-let strong-read = R & (RLX | ACQ)
-let strong-m = strong-write | strong-read
-// Memory fences (Table 20: membar, fence.sc, fence.acq_rel); fence.release and fence.acquire act on one side only (M2),
-// and so do the .release and .acquire tensormap proxy fences (22662-22664, M26)
-let memory-fence = F & (SC | ACQ_REL)
-let release-fence = memory-fence | (F & REL)
-let acquire-fence = memory-fence | (F & ACQ)
-let strong-operation = strong-m | release-fence | acquire-fence
-
-(* 8.7 Morally strong operations *)
-let same-proxy = GEN * GEN | SUR * SUR | TEX * TEX | CON * CON | ASYNC * ASYNC | TMAP * TMAP
-// The operations are related in program order, or each operation is strong and
-// specifies a scope that includes the thread executing the other operation.
-let ms-scope = (po | po^-1) | ([strong-operation]; sr; [strong-operation])
-              // the complete-tx of an asynchronous operation acts on behalf of the CTA of its mbarrier (M42)
-              | ([AOP & MBAR]; vloc; [MBAR]) | ([MBAR]; vloc; [AOP & MBAR])
-// Two memory operations overlap completely if they access the same granules (M14)
-let partial-overlap = vloc & ((WHOLE * PART) | (PART * WHOLE))
-let complete-overlap = vloc \ partial-overlap
-let ms-overlap = ((M * M) & complete-overlap) | ((_ * _) \ (M * M))
-let morally-strong = (ms-scope & same-proxy & ms-overlap) \ id
-
-(* 8.9.2 Observation order: a write, then a chain of atomic operations, then a read (M6) *)
-let ms-rf = morally-strong & rf
-let observation = ms-rf; (rmw; ms-rf)*
-
-(* 8.8 Release and acquire patterns *)
-let po-vloc = po & vloc
-let release-pattern = ([W & REL]; po-vloc?; [strong-write]) | ([release-fence]; po; [strong-write])
-let acquire-pattern = ([strong-read]; po-vloc?; [R & ACQ]) | ([strong-read]; po; [acquire-fence])
-
-(* 8.9.4 Memory synchronization *)
-// A release pattern synchronizes with an acquire pattern if a write of the first precedes a read of the second in
-// observation order, and the first operation of the first and the last operation of the second are morally strong.
-let sync-pattern = morally-strong & (release-pattern; observation; acquire-pattern)
-// bar{.cta}.sync, .red and .arrive synchronize with bar{.cta}.sync and .red on the same barrier (6927-6928);
-// bar.warp.sync among the threads of its member mask (M30)
-let sync-cta-barrier = syncbar & scta & ((~BAR_CLUSTER) * (~BAR_CLUSTER))
-// barrier.cluster.arrive synchronizes with barrier.cluster.wait (6930), only in that direction (22511-22512);
-// a .relaxed arrive only through a memory fence before it whose scope includes the waiting thread (M31)
-// (cluster arrives carry REL or RLX, waits ACQ)
-let cluster-arrive-wait = [BAR_CLUSTER & (REL | RLX)]; syncbar; [BAR_CLUSTER & ACQ]
-let sync-cluster-barrier = ([REL]; cluster-arrive-wait)
-                         | ((([release-fence]; po; [BAR_CLUSTER & RLX]); cluster-arrive-wait) & sr)
-let sync-barrier = sync-cta-barrier | sync-cluster-barrier
-// griddepcontrol.wait waits for the prerequisite grid and its memory operations (23827-23829, M49)
-let sync-grid = (GRID0 * GRIDWAIT1) | (GRID1 * GRIDWAIT2) | (GRID2 * GRIDWAIT3)
-// Fence-SC order (8.9.3, M4)
-let sync-any = sync-pattern | sync_fence | sync-barrier | sync-grid
-
-(* 8.9.5 Base causality order, with restricted fences (22621-22630, M36) *)
-// A restricted release fence (.sync_restrict::shared::cta, .mbarrier_init) orders only some of the operations
-// before it, a restricted acquire fence (.sync_restrict::shared::cluster) only some of the operations after it.
-let restricted-release = F & (RESTRICT_CTA | RESTRICT_MBAR_INIT)
-let restricted-acquire = F & RESTRICT_CLUSTER
-let sync = [~restricted-release]; sync-any; [~restricted-acquire]
-let cause-normal = (po?; (sync; po?)+) | po
-// before a .sync_restrict::shared::cta fence: operations on objects in the shared memory of its CTA;
-// before a .mbarrier_init fence: the mbarrier.init operations of its thread
-let restricted-before = ([M & SHARED_CTA]; (cause-normal & scta); [F & RESTRICT_CTA])
-                      | ([MBAR_INIT]; po; [F & RESTRICT_MBAR_INIT])
-// after a .sync_restrict::shared::cluster fence: operations on objects in shared memory
-let restricted-after = [F & RESTRICT_CLUSTER]; po; [M & SHARED]
-let sync-restricted-release = [restricted-release]; sync-any; [~restricted-acquire]
-let sync-restricted-acquire = [~restricted-release]; sync-any; [restricted-acquire]
-let sync-restricted-both = [restricted-release]; sync-any; [restricted-acquire]
-let cause-base = cause-normal
-               | (restricted-before; sync-restricted-release; cause-normal?)
-               | (cause-normal?; sync-restricted-acquire; restricted-after; cause-normal?)
-               | (restricted-before; sync-restricted-both; restricted-after; cause-normal?)
-
-(* 8.9.5 Proxy-preserved base causality order: the PTX 7.5 model's rules (M21, M27), with the async proxy and
-   state-space-limited async proxy fences (M25), and the tensormap proxy fences (M26) *)
-// A bi-directional proxy fence orders the operations of its CTA that use its proxy; fence.proxy.async with a state
-// space only those on objects in that space
-let fence-space = ([F & ~(GLOBAL | SHARED | SHARED_CTA)] ; (_ * M))
-                | ([F & GLOBAL]; (_ * GLOBAL)) | ([F & SHARED]; (_ * SHARED)) | ([F & SHARED_CTA]; (_ * SHARED_CTA))
-let proxy-fence-ops = ([F & ~TMAP_FENCE & ~ASYNC_FROM_GEN]; (same-proxy & scta); [M]) & fence-space
-let async-from-generic-ops = ([F & ASYNC_FROM_GEN]; scta; [M & ASYNC]) & fence-space
-// The last hop of a path may reach an asynchronous operation through its issue order
-let cbi = cause-base | (cause-base?; issue)
-let proxy-preserved-cause-base
-                = ([GEN]; (vloc & cbi); [GEN])
-                | ([M]; (same-proxy & scta & vloc & cbi); [M])
-                | vloc & (cause-base & (proxy-fence-ops^-1); cbi; [GEN])
-                | vloc & ([GEN]; cause-base; cbi & proxy-fence-ops)
-                | vloc & (cause-base & (proxy-fence-ops^-1); cause-base; cbi & proxy-fence-ops)
-                | loc & ([GEN]; cause-base; [F & ALIAS]; cbi; [GEN])
-                | loc & (cause-base & (proxy-fence-ops^-1); cause-base; [F & ALIAS]; cbi; [GEN])
-                | loc & ([GEN]; cause-base; [F & ALIAS]; cause-base; cbi & proxy-fence-ops)
-                | loc & (cause-base & (proxy-fence-ops^-1); cause-base; [F & ALIAS]; cause-base; cbi & proxy-fence-ops)
-                // generic access -> fence.proxy.async::generic -> async access (uni-directional, M38)
-                | vloc & ([GEN]; cause-base; (cbi & async-from-generic-ops))
-                // generic write -> tensormap release fence -> tensormap acquire fence -> tensormap read (M26)
-                | vloc & ([GEN]; cause-base; [TMAP_FENCE & REL]; cause-base; [TMAP_FENCE & ACQ]; cbi; [TMAP])
-                // the completion of an asynchronous operation is followed by an implicit generic-async proxy fence
-                // (18763-18765, M41)
-                | vloc & ([M & ASYNC]; cause-base; [COMPLETION]; cbi; [GEN])
-
-(* 8.9.5 Causality order *)
-let cause = proxy-preserved-cause-base | (observation; proxy-preserved-cause-base)
-
-(* 8.7.2 Mixed-size data races: conflicting operations that overlap partially and are not ordered by causality.
-   The axioms do not apply to an execution with such a race; its reads still return values written by some write
-   (M16). ub relates all events if the execution has a mixed-size data race, and nothing otherwise. *)
-let conflict = (W * M) | (M * W)
-let mixed-size-race = (conflict & partial-overlap) \ (cause | cause^-1)
-// Other undefined behaviour executes a UB event (e.g. an operation on an invalid mbarrier object). It is only
-// reported: whether it happens depends on the values read, so it must not relax the axioms that constrain them (M35).
-// Undefined behaviour that does not depend on values (UB_STATIC, e.g. a missing wgmma.fence) relaxes the axioms too
-let ub = (_ * _); (mixed-size-race | [UB_STATIC]); (_ * _)
+(* Undefined behaviour is reported, not modelled: the axioms still apply to the execution.
+   - 8.7.2: the axioms do not apply to a program with a mixed-size data race. Whether a program has one is a
+     question about all its executions; it is checked with --property=cat_spec, and the program is then decided
+     with ptx-v8.7-noaxioms.cat (M16).
+   - UB: an event executed only after a misuse (e.g. an operation on an invalid mbarrier object, M35);
+     UB_STATIC: undefined behaviour visible in the program text (a missing wgmma.fence, M51). *)
 flag ~empty mixed-size-race as mixed-size-data-race
 flag ~empty ([UB] | [UB_STATIC]) as undefined-behaviour
 
@@ -187,34 +20,33 @@ flag ~empty ([UB] | [UB_STATIC]) as undefined-behaviour
 (******************************)
 
 (* 8.10.1 Coherence *)
-empty ((([W]; cause; [W]) & loc) \ co) \ ub as axiom-Coherence
+empty ((([W]; cause; [W]) & loc) \ co) as axiom-Coherence
 // Morally strong overlapping writes are related by coherence order (8.9.6)
-empty ((([W]; morally-strong; [W]) & loc) \ (co | co^-1)) \ ub as axiom-Coherence2
+empty ((([W]; morally-strong; [W]) & loc) \ (co | co^-1)) as axiom-Coherence2
 // Coherence order relates write operations: a morally strong pair of writes to several granules is ordered the
 // same way on all of them (M15)
 let ms-co = morally-strong & co
-irreflexive (ms-co; si; ms-co; si) \ ub as axiom-Coherence-granules
+irreflexive (ms-co; si; ms-co; si) as axiom-Coherence-granules
 
 (* 8.10.2 Fence-SC: causality order between fences is base causality order (M5) *)
-empty ((([F & SC]; cause-base; [F & SC]) & morally-strong) \ sync_fence) \ ub as axiom-FenceSC
+empty ((([F & SC]; cause-base; [F & SC]) & morally-strong) \ sync_fence) as axiom-FenceSC
 
 (* 8.10.3 Atomicity *)
 // Single-copy atomicity: a read does not read some granules from a morally strong write and others from
 // writes that precede it in coherence order (M15)
-irreflexive ((morally-strong & fr); si; (morally-strong & rf); si) \ ub as axiom-SingleCopyAtomicity
+irreflexive ((morally-strong & fr); si; (morally-strong & rf); si) as axiom-SingleCopyAtomicity
 // Atomicity of read-modify-write operations
-empty ((((morally-strong & fr); (morally-strong & co)) & rmw) \ ub) as axiom-Atomicity
+empty (((morally-strong & fr); (morally-strong & co)) & rmw) as axiom-Atomicity
 // 8.7.2: overlapping atomic operations whose scopes include each other are atomic also when they overlap
-// partially, and also in programs with mixed-size data races (M17)
-let atomic-pair = (ms-scope & same-proxy) \ id
+// partially (M17)
 empty (((atomic-pair & fr); [range(rmw)]; (atomic-pair & co)) & rmw) as axiom-MixedSizeAtomicity
 
 (* 8.10.4 No-Thin-Air *)
 let dep = addr | data | ctrl
-acyclic (rf | dep) \ ub as axiom-NoThinAir
+acyclic (rf | dep) as axiom-NoThinAir
 
 (* 8.10.5 Sequential consistency per location, for morally strong operations (M7) *)
-acyclic (morally-strong & (po | rf | co | fr) & vloc) \ ub as axiom-ScPerLocation
+acyclic (morally-strong & (po | rf | co | fr) & vloc) as axiom-ScPerLocation
 
 (* 8.10.6 Causality *)
-irreflexive ((rf | fr); cause) \ ub as axiom-Causality
+irreflexive ((rf | fr); cause) as axiom-Causality
