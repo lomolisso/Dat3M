@@ -65,8 +65,16 @@ let acquire-pattern = ([strong-read]; po-vloc?; [R & ACQ]) | ([strong-read]; po;
 // A release pattern synchronizes with an acquire pattern if a write of the first precedes a read of the second in
 // observation order, and the first operation of the first and the last operation of the second are morally strong.
 let sync-pattern = morally-strong & (release-pattern; observation; acquire-pattern)
-// Barriers as in the PTX 7.5 model (M21)
-let sync-barrier = syncbar & scta
+// bar{.cta}.sync, .red and .arrive synchronize with bar{.cta}.sync and .red on the same barrier (6927-6928);
+// bar.warp.sync among the threads of its member mask (M30)
+let sync-cta-barrier = syncbar & scta & ((~BAR_CLUSTER) * (~BAR_CLUSTER))
+// barrier.cluster.arrive synchronizes with barrier.cluster.wait (6930), only in that direction (22511-22512);
+// a .relaxed arrive only through a memory fence before it whose scope includes the waiting thread (M31)
+// (cluster arrives carry REL or RLX, waits ACQ)
+let cluster-arrive-wait = [BAR_CLUSTER & (REL | RLX)]; syncbar; [BAR_CLUSTER & ACQ]
+let sync-cluster-barrier = ([REL]; cluster-arrive-wait)
+                         | ((([release-fence]; po; [BAR_CLUSTER & RLX]); cluster-arrive-wait) & sr)
+let sync-barrier = sync-cta-barrier | sync-cluster-barrier
 // Fence-SC order (8.9.3, M4)
 let sync = sync-pattern | sync_fence | sync-barrier
 

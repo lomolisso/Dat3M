@@ -33,8 +33,8 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
   cluster dimensions at launch time then it will be treated as explicit cluster launch, otherwise it will be
   treated as implicit cluster launch with default dimension 1x1x1."
 - **Alternatives.** (a) every CTA is its own cluster; (b) all threads of a GPU are in cluster 0.
-- **Choice.** (a), the implicit 1x1x1 cluster of the manual. A test must name the cluster of all its threads or of
-  none. With (a), `.cluster` scope behaves like `.cta` in old tests, so their results do not change.
+- **Choice.** (a), the implicit 1x1x1 cluster of the manual (cluster id 1000000 + CTA id). A test must name the
+  cluster of all its threads or of none. With (a), `.cluster` scope behaves like `.cta` in old tests, so their results do not change.
 - **Tests.** None changes verdict with (b): every test that uses `.cluster` names the clusters of its threads.
 
 ### M2. `fence.acquire` and `fence.release`
@@ -302,7 +302,7 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
 ### M21. Proxies, aliases and `bar.cta.*` from the PTX 7.5 model
 
 - **Question.** How much of the PTX 7.5 model's treatment of proxies and barriers is kept?
-- **Choice.** The proxy rules are kept and extended (M25-M27). Barriers: see the barrier entries.
+- **Choice.** The proxy rules are kept and extended (M25-M27). Barriers: M28-M31.
 - **Tests.** `Nvidia/proxy/*`, `Manual/proxy/*`, `Barrier/*`, `Kamui/mixedproxy/*`.
 
 ### M22. State spaces and the owner of shared locations (test dialect)
@@ -396,6 +396,75 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
   operation ("thread block" read as CTA), with the alias rules for virtual aliases. The async proxy is added as one
   more proxy (M25); the tensormap proxy uses M26. No upstream test changes verdict.
 - **Tests.** `Nvidia/proxy/*`, `Manual/proxy/*`, `Kamui/mixedproxy/*`, and the async and tensormap tests.
+
+### M28. `bar.cta.sync` in the test dialect and PTX's `bar` forms
+
+- **Question.** Upstream tests write `bar.cta.sync id{, barrier{, count}}`, where the first operand is an instance id
+  of the dialect, not PTX's barrier number. PTX's `bar{.cta}.sync a{, b}` takes the barrier first.
+- **Manual.** 22255-22264 (syntax: `bar{.cta}.sync a{, b}`, `bar{.cta}.arrive a, b`); 22340-22342: "The optional .cta
+  qualifier simply indicates CTA-level applicability of the barrier and it doesn't change the semantics".
+- **Choice.** `bar.cta.sync`/`bar.cta.arrive` keep the upstream dialect meaning, so upstream tests are unchanged;
+  `bar.sync`, `bar.arrive`, `barrier.sync{.aligned}`, `barrier.arrive{.aligned}` and `barrier.cta.*` have PTX's
+  meaning (M29). Tests should use the PTX forms.
+- **Tests.** `Barrier/*`, `Manual/*` with `bar.cta.*` (upstream meaning); `Kamui/kamui/ptx87/bar/*` (PTX meaning).
+
+### M29. Barrier instances and thread counts
+
+- **Question.** Litmus threads are single threads, but barriers count threads in multiples of the warp size, and a
+  barrier is reused: which executions of `bar.sync a, b` belong together?
+- **Manual.** 22273-22274: "Each CTA instance has sixteen barriers numbered 0..15." 22280-22284: "Operand b specifies
+  the number of threads participating in the barrier. If no thread count is specified, all threads in the CTA
+  participate in the barrier. When specifying a thread count, the value must be a multiple of the warp size."
+  22297-22298: "When a barrier completes, the waiting threads are restarted without delay, and the barrier is
+  reinitialized so that it can be immediately reused." 22301-22304: "guarantees that when the barrier completes,
+  prior memory accesses requested by this thread are performed relative to all threads participating in the
+  barrier."
+- **Choice.** Each litmus thread counts as one participant (the warp-size rule is not applied). The k-th use of
+  barrier a by a thread joins the k-th instance of barrier a. Without a count, every thread of the CTA that uses the
+  instance must arrive; with a count, the instance completes when that many threads arrived (Dartagnan's named
+  barriers), and a thread blocks at an instance that never completes. Synchronization (6927-6928): an arrive or
+  sync synchronizes with every sync of the same instance; an arrive is never the target.
+- **Tests.** `Kamui/kamui/ptx87/bar/*` (`bar.sync-count+hang`: forbidden, the waiting thread never loads),
+  `Kamui/kamui/ptx87/sizes/mixed-size+bar.sync`.
+
+### M30. `bar.warp.sync`
+
+- **Question.** `bar.warp.sync` orders memory among its threads, but the warp is not a scope and the instruction is
+  not in 8.9.4.
+- **Manual.** 22448-22450: "bar.warp.sync also guarantee memory ordering among threads participating in barrier.
+  Thus, threads within warp that wish to communicate via memory can store to memory, execute bar.warp.sync, and then
+  safely read values stored by other threads in warp." 6767-6768: "the warp is not a scope". 22446: "The behavior of
+  bar.warp.sync is undefined if the executing thread is not in the membermask."
+- **Alternatives.** (a) the members synchronize like `bar.sync` among them; (b) no memory effect, since 8.9.4 does not
+  list it.
+- **Choice.** (a), as 22448-22450 promises. In the dialect bit k of the mask is thread Pk; all members must be in the
+  executing thread's CTA, and the executing thread must be a member (otherwise the test is rejected).
+- **Tests.** `Kamui/kamui/ptx87/bar/MP+bar.warp.sync` (forbidden), `MP+bar.warp.sync+non-member` (allowed).
+
+### M31. `barrier.cluster` arrive and wait
+
+- **Question.** How do `barrier.cluster.arrive{.release,.relaxed}` and `barrier.cluster.wait` synchronize, and does a
+  memory fence before a `.relaxed` arrive form a release pattern?
+- **Manual.** 6930: "A barrier.cluster.arrive operation synchronizes with a barrier.cluster.wait operation."
+  22506-22509: "The barrier.cluster.wait instruction guarantees that when it completes the execution, memory accesses
+  (except asynchronous operations) requested, in program order, prior to the preceding barrier.cluster.arrive by all
+  threads in the cluster are complete and visible to the executing thread." 22511-22512: "There is no memory
+  ordering and visibility guarantee for memory accesses requested by the executing thread, in program order, after
+  barrier.cluster.arrive and prior to barrier.cluster.wait." 22514-22516: "The optional .relaxed qualifier on
+  barrier.cluster.arrive specifies that there are no memory ordering and visibility guarantees provided for the
+  memory accesses performed prior to barrier.cluster.arrive." 22520-22522: `.release` and `.acquire` are the
+  defaults. 6840-6842: "a memory fence followed by a strong write on M" is a release pattern.
+- **Alternatives.** For a fence before a relaxed arrive: (a) it synchronizes with the wait like a release pattern;
+  (b) no synchronization, since the arrive is not a write.
+- **Choice.** The k-th arrive and k-th wait of all threads of the cluster form the k-th instance. A `.release` arrive
+  synchronizes with every wait of its instance (not with arrives; waits do not synchronize with each other, so
+  accesses between a thread's arrive and wait are not ordered). For a `.relaxed` arrive, (a): a memory fence before
+  it, whose scope includes the waiting thread, synchronizes with the wait. (b) would make `fence; arrive.relaxed`,
+  the pattern the manual's own example uses with restricted fences (22738-22755), useless. In Dartagnan an arrive
+  also waits until every thread of the cluster reached the instance (the encoding of control barriers); with
+  straight-line tests this changes nothing.
+- **Tests.** `Kamui/kamui/ptx87/barrier-cluster/*`, `Kamui/kamui/hand/MP+barrier.cluster*`
+  (`MP+barrier.cluster-relaxed+fence+same-cluster` forbidden, `MP+barrier.cluster-relaxed+fence.cta` allowed).
 
 ## Tests Dartagnan cannot decide
 
