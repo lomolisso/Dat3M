@@ -486,6 +486,8 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             fence.addTags(Tag.PTX.SC, level.equals("gl") ? Tag.PTX.GPU : parseScope(level), Tag.PTX.GEN);
             return List.of(fence);
         }
+        final boolean mbarrierInit = q.take("mbarrier_init");
+        final String restrict = q.takeOne(Set.of("sync_restrict::shared::cta", "sync_restrict::shared::cluster"));
         final String sem = defaultIfNull(q.takeOne(FENCE_SEMS), "acq_rel");
         final String scope = q.takeOne(PTXQualifiers.SCOPES);
         q.checkConsumed();
@@ -493,7 +495,24 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             throw q.error("Missing scope");
         }
         fence.addTags(parseMo(sem), parseScope(scope), Tag.PTX.GEN);
+        if (mbarrierInit || restrict != null) {
+            addRestriction(q, fence, mbarrierInit ? "mbarrier_init" : restrict, sem, scope);
+        }
         return List.of(fence);
+    }
+
+    // .mbarrier_init and .sync_restrict::shared::cta need .release.cluster, .sync_restrict::shared::cluster needs
+    // .acquire.cluster
+    private static void addRestriction(PTXQualifiers q, Event fence, String restrict, String sem, String scope) {
+        final boolean release = !restrict.equals("sync_restrict::shared::cluster");
+        if (!sem.equals(release ? "release" : "acquire") || !scope.equals("cluster")) {
+            throw q.error("." + restrict + " needs ." + (release ? "release" : "acquire") + ".cluster");
+        }
+        fence.addTags(switch (restrict) {
+            case "mbarrier_init" -> Tag.PTX.RESTRICT_MBAR_INIT;
+            case "sync_restrict::shared::cta" -> Tag.PTX.RESTRICT_CTA;
+            default -> Tag.PTX.RESTRICT_CLUSTER;
+        });
     }
 
     // fence.proxy.{alias,surface,texture,constant}, fence.proxy.async{.global,.shared::cta,.shared::cluster}
@@ -513,6 +532,21 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             return List.of(fence);
         }
         checkOperandCount(q, operands, 0);
+        if (q.take("async::generic")) {
+            // fence.proxy.async::generic.{release,acquire}.sync_restrict::shared::{cta,cluster}.cluster: a restricted
+            // release or acquire fence that also orders generic-proxy accesses before async-proxy accesses
+            final String restrict = q.takeOne(Set.of("sync_restrict::shared::cta", "sync_restrict::shared::cluster"));
+            final String sem = q.takeOne(Set.of("release", "acquire"));
+            final String scope = q.takeOne(PTXQualifiers.SCOPES);
+            q.checkConsumed();
+            if (restrict == null || sem == null || scope == null) {
+                throw q.error("Expected .release or .acquire, a .sync_restrict qualifier and a scope");
+            }
+            fence.addTags(parseMo(sem), parseScope(scope), Tag.PTX.GEN, Tag.PTX.ASYNC_FROM_GEN,
+                    restrict.endsWith("cta") ? Tag.PTX.SHARED_CTA : Tag.PTX.SHARED);
+            addRestriction(q, fence, restrict, sem, scope);
+            return List.of(fence);
+        }
         if (q.take("async")) {
             final String space = q.takeOne(Set.of("global", "shared::cta", "shared::cluster"));
             q.checkConsumed();

@@ -280,6 +280,12 @@ public final class Tag {
         public static final String PART = "PART";
         public static final String ASYNC = "ASYNC"; // the async proxy
         public static final String TMAP = "TMAP"; // the tensormap proxy
+        // Restricted fences: .sync_restrict::shared::cta, .sync_restrict::shared::cluster, .mbarrier_init
+        public static final String RESTRICT_CTA = "RESTRICT_CTA";
+        public static final String RESTRICT_CLUSTER = "RESTRICT_CLUSTER";
+        public static final String RESTRICT_MBAR_INIT = "RESTRICT_MBAR_INIT";
+        // Uni-directional proxy fences from the generic to the async proxy (fence.proxy.async::generic)
+        public static final String ASYNC_FROM_GEN = "ASYNC_FROM_GEN";
         // Fences between the generic and the tensormap proxy
         public static final String TMAP_FENCE = "TMAP_FENCE";
         // State space of the accessed location; SHARED_CTA: shared memory of the CTA of the accessing thread
