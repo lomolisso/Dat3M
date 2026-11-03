@@ -3,25 +3,6 @@
 
 // barriers
 litmus/PTX/Kamui/kamui/ptx87/barrier-cluster/MP+barrier.cluster+async-copy.litmus
-litmus/PTX/Kamui/kamui/ptx87/barrier-cluster/MP+barrier.cluster-relaxed+fence-restrict-cta+global.litmus
-litmus/PTX/Kamui/kamui/ptx87/barrier-cluster/MP+barrier.cluster-relaxed+fence-restrict-cta.litmus
-
-// mbarrier
-litmus/PTX/Kamui/kamui/ptx87/mbarrier-init/mbarrier-init+op-restrict+cluster-barrier.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier-init/mbarrier-init+op-restrict+data.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP+fence-restrict-cta+mbarrier-relaxed-remote.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP+mbarrier-try_wait-relaxed+fence-restrict+global.litmus
-litmus/PTX/Kamui/kamui/ptx87/mbarrier/MP+mbarrier-try_wait-relaxed+fence-restrict.litmus
-
-// restricted fences
-litmus/PTX/Kamui/kamui/ptx87/restrict/MP+fence-restrict-both+producer-shared.litmus
-litmus/PTX/Kamui/kamui/ptx87/restrict/MP+fence-restrict-both.litmus
-litmus/PTX/Kamui/kamui/ptx87/restrict/MP+fence-restrict-cluster+global.litmus
-litmus/PTX/Kamui/kamui/ptx87/restrict/MP+fence-restrict-cluster+shared.litmus
-litmus/PTX/Kamui/kamui/ptx87/restrict/MP+fence-restrict-cta+global.litmus
-litmus/PTX/Kamui/kamui/ptx87/restrict/MP+fence-restrict-cta+not-transitive.litmus
-litmus/PTX/Kamui/kamui/ptx87/restrict/MP+fence-restrict-cta+remote-shared.litmus
-litmus/PTX/Kamui/kamui/ptx87/restrict/MP+fence-restrict-cta+shared.litmus
 
 // asynchronous operations
 litmus/PTX/Kamui/kamui/hand/CoWR+async-bulk+same-cta.litmus
