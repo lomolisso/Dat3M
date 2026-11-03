@@ -2,22 +2,9 @@
 // LitmusPTXv8_7KamuiTest skips them.
 
 // barriers
-litmus/PTX/Kamui/kamui/hand/MP+barrier.cluster+same-cluster.litmus
-litmus/PTX/Kamui/kamui/hand/MP+barrier.cluster-relaxed+fence+same-cluster.litmus
-litmus/PTX/Kamui/kamui/hand/MP+barrier.cluster-relaxed+same-cluster.litmus
-litmus/PTX/Kamui/kamui/ptx87/bar/MP+bar.arrive+bar.sync.litmus
-litmus/PTX/Kamui/kamui/ptx87/bar/MP+bar.sync-count+third-thread.litmus
-litmus/PTX/Kamui/kamui/ptx87/bar/MP+bar.warp.sync+non-member.litmus
-litmus/PTX/Kamui/kamui/ptx87/bar/MP+bar.warp.sync.litmus
-litmus/PTX/Kamui/kamui/ptx87/bar/bar.sync-count+hang.litmus
 litmus/PTX/Kamui/kamui/ptx87/barrier-cluster/MP+barrier.cluster+async-copy.litmus
-litmus/PTX/Kamui/kamui/ptx87/barrier-cluster/MP+barrier.cluster+between-arrive-and-wait.litmus
-litmus/PTX/Kamui/kamui/ptx87/barrier-cluster/MP+barrier.cluster+remote-shared.litmus
 litmus/PTX/Kamui/kamui/ptx87/barrier-cluster/MP+barrier.cluster-relaxed+fence-restrict-cta+global.litmus
 litmus/PTX/Kamui/kamui/ptx87/barrier-cluster/MP+barrier.cluster-relaxed+fence-restrict-cta.litmus
-litmus/PTX/Kamui/kamui/ptx87/barrier-cluster/MP+barrier.cluster-relaxed+fence.cta.litmus
-litmus/PTX/Kamui/kamui/ptx87/barrier-cluster/SB+barrier.cluster.litmus
-litmus/PTX/Kamui/kamui/ptx87/sizes/mixed-size+bar.sync.litmus
 
 // mbarrier
 litmus/PTX/Kamui/kamui/hand/MP+fence-rel+mbarrier-rel-acq.cta+same-cta.litmus
