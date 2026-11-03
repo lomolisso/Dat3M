@@ -543,6 +543,59 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
 - **Tests.** `Kamui/kamui/ptx87/mbarrier-init/mbarrier-init+same-thread` (forbidden; allowed under (a)),
   `mbarrier-init+inval+use` (forbidden, flagged).
 
+### M36. Restricted fences
+
+- **Question.** Which operations do `fence.release.sync_restrict::shared::cta.cluster`,
+  `fence.acquire.sync_restrict::shared::cluster.cluster` and `fence.mbarrier_init.release.cluster` order, and are
+  they the fences of release and acquire patterns although Table 20 does not list them (gap 7)?
+- **Manual.** 22621-22630: "Qualifiers .op_restrict and .sync_restrict restrict the class of memory operations for
+  which the fence instruction provides the memory ordering guarantees. When .op_restrict is .mbarrier_init, the
+  synchronizing effect of the fence only applies to the prior mbarrier.init operations executed by the same thread
+  on mbarrier objects in .shared::cta state space. When .sync_restrict is .sync_restrict::shared::cta, .sem must be
+  .release, and the effect of the fence only applies to operations performed on objects in .shared::cta state space.
+  Likewise, when .sync_restrict is .sync_restrict::shared::cluster, .sem must be .acquire, and the effect of the
+  fence only applies to operations performed on objects in .shared::cluster state space. When either
+  .sync_restrict::shared::cta or .sync_restrict::shared::cluster is present, the .scope must be specified as
+  .cluster." 22738-22755: the manual's example pairs these fences with relaxed mbarrier arrivals, relaxed waits and
+  relaxed cluster barrier arrivals.
+- **Alternatives.** For "objects in .shared::cta": (a) locations in the shared memory of the fence's CTA, however
+  they are accessed; (b) accesses written with a `.shared::cta` qualifier. For the fence itself: (c) one-sided
+  release/acquire pattern fences (as M2) whose effect is limited to those operations; (d) no synchronizing effect,
+  since Table 20 does not list them.
+- **Choice.** (a) and (c). A `.sync_restrict::shared::cta` release fence orders the operations before it on
+  locations in the shared memory of its CTA (its own and those that reach it through base causality from threads of
+  its CTA); a `.mbarrier_init` fence the `mbarrier.init` operations of its thread before it; a
+  `.sync_restrict::shared::cluster` acquire fence the operations after it on locations in any shared memory. Global
+  memory is never covered. (a) follows "objects in ... state space"; (d) would contradict 22622 ("restrict the
+  class of memory operations for which the fence ... provides the memory ordering guarantees").
+- **Tests.** `Kamui/kamui/ptx87/restrict/*`, `barrier-cluster/MP+barrier.cluster-relaxed+fence-restrict-cta{,+global}`,
+  `mbarrier/MP+fence-restrict-cta+mbarrier-relaxed-remote`, `mbarrier/MP+mbarrier-try_wait-relaxed+fence-restrict*`,
+  `mbarrier-init/mbarrier-init+op-restrict*`. Under (d) the forbidden ones become allowed; no test distinguishes (a)
+  from (b).
+
+### M37. Restricted fences and transitivity
+
+- **Question.** After a restricted fence synchronizes, does base causality stay transitive?
+- **Manual.** 6976 and 7018-7019: base causality is transitive ("accounts for the cumulativity of synchronizing
+  operations"); 22621-22630 (the restriction).
+- **Choice.** The restriction applies to the operations the fence orders, not to what follows: an operation covered
+  by a restricted release fence precedes everything the synchronization reaches, transitively; a restricted acquire
+  fence passes on only the covered operations after it, which then order further operations as usual. In this
+  implementation a base causality path contains at most one restricted release fence and at most one restricted
+  acquire fence (enough for every test in the corpus).
+- **Tests.** `Kamui/kamui/ptx87/restrict/MP+fence-restrict-cta+not-transitive` (allowed: the global store before the
+  fence is not ordered).
+
+### M38. `fence.proxy.async::generic` with `.sync_restrict`
+
+- **Question.** The manual gives `fence.proxy.async::generic.release.sync_restrict::shared::cta.cluster` and the
+  acquire form (22580-22581, example 22738-22755) without separate text.
+- **Manual.** 22645-22647 (uni-directional proxy ordering), 22662-22664 (release and acquire proxy fences), 22621-22630.
+- **Choice.** A restricted release or acquire fence (M36) that also orders, uni-directionally, generic-proxy accesses
+  before it and async-proxy accesses after it, for locations in the shared memory named by its `.sync_restrict`
+  qualifier.
+- **Tests.** None in the corpus.
+
 ## Tests Dartagnan cannot decide
 
 The results below are the same with the PTX 7.5 model; they are limits of Dartagnan, not of the model.

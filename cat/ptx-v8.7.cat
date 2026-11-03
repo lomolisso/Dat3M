@@ -77,10 +77,28 @@ let sync-cluster-barrier = ([REL]; cluster-arrive-wait)
                          | ((([release-fence]; po; [BAR_CLUSTER & RLX]); cluster-arrive-wait) & sr)
 let sync-barrier = sync-cta-barrier | sync-cluster-barrier
 // Fence-SC order (8.9.3, M4)
-let sync = sync-pattern | sync_fence | sync-barrier
+let sync-any = sync-pattern | sync_fence | sync-barrier
 
-(* 8.9.5 Base causality order *)
-let cause-base = (po?; (sync; po?)+) | po
+(* 8.9.5 Base causality order, with restricted fences (22621-22630, M36) *)
+// A restricted release fence (.sync_restrict::shared::cta, .mbarrier_init) orders only some of the operations
+// before it, a restricted acquire fence (.sync_restrict::shared::cluster) only some of the operations after it.
+let restricted-release = F & (RESTRICT_CTA | RESTRICT_MBAR_INIT)
+let restricted-acquire = F & RESTRICT_CLUSTER
+let sync = [~restricted-release]; sync-any; [~restricted-acquire]
+let cause-normal = (po?; (sync; po?)+) | po
+// before a .sync_restrict::shared::cta fence: operations on objects in the shared memory of its CTA;
+// before a .mbarrier_init fence: the mbarrier.init operations of its thread
+let restricted-before = ([M & SHARED_CTA]; (cause-normal & scta); [F & RESTRICT_CTA])
+                      | ([MBAR_INIT]; po; [F & RESTRICT_MBAR_INIT])
+// after a .sync_restrict::shared::cluster fence: operations on objects in shared memory
+let restricted-after = [F & RESTRICT_CLUSTER]; po; [M & SHARED]
+let sync-restricted-release = [restricted-release]; sync-any; [~restricted-acquire]
+let sync-restricted-acquire = [~restricted-release]; sync-any; [restricted-acquire]
+let sync-restricted-both = [restricted-release]; sync-any; [restricted-acquire]
+let cause-base = cause-normal
+               | (restricted-before; sync-restricted-release; cause-normal?)
+               | (cause-normal?; sync-restricted-acquire; restricted-after; cause-normal?)
+               | (restricted-before; sync-restricted-both; restricted-after; cause-normal?)
 
 (* 8.9.5 Proxy-preserved base causality order: the PTX 7.5 model's rules (M21, M27), with the async proxy and
    state-space-limited async proxy fences (M25), and the tensormap proxy fences (M26) *)
@@ -88,7 +106,8 @@ let cause-base = (po?; (sync; po?)+) | po
 // space only those on objects in that space
 let fence-space = ([F & ~(GLOBAL | SHARED | SHARED_CTA)] ; (_ * M))
                 | ([F & GLOBAL]; (_ * GLOBAL)) | ([F & SHARED]; (_ * SHARED)) | ([F & SHARED_CTA]; (_ * SHARED_CTA))
-let proxy-fence-ops = ([F & ~TMAP_FENCE]; (same-proxy & scta); [M]) & fence-space
+let proxy-fence-ops = ([F & ~TMAP_FENCE & ~ASYNC_FROM_GEN]; (same-proxy & scta); [M]) & fence-space
+let async-from-generic-ops = ([F & ASYNC_FROM_GEN]; scta; [M & ASYNC]) & fence-space
 let proxy-preserved-cause-base
                 = ([GEN]; (vloc & cause-base); [GEN])
                 | ([M]; (same-proxy & scta & vloc & cause-base); [M])
@@ -99,6 +118,8 @@ let proxy-preserved-cause-base
                 | loc & (cause-base & (proxy-fence-ops^-1); cause-base; [F & ALIAS]; cause-base; [GEN])
                 | loc & ([GEN]; cause-base; [F & ALIAS]; cause-base; cause-base & proxy-fence-ops)
                 | loc & (cause-base & (proxy-fence-ops^-1); cause-base; [F & ALIAS]; cause-base; cause-base & proxy-fence-ops)
+                // generic access -> fence.proxy.async::generic -> async access (uni-directional, M36)
+                | vloc & ([GEN]; cause-base; (cause-base & async-from-generic-ops))
                 // generic write -> tensormap release fence -> tensormap acquire fence -> tensormap read
                 | vloc & ([GEN]; cause-base; [TMAP_FENCE & REL]; cause-base; [TMAP_FENCE & ACQ]; cause-base; [TMAP])
 
