@@ -1,0 +1,14 @@
+PTX self-copy+no-fence+no-wait
+{
+s=0 @cta 0;
+d=0 @cta 0;
+b=mbarrier(1) @cta 0;
+P0:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                       ;
+ st.weak.shared::cta s, 5                                                       ;
+ mbarrier.arrive.expect_tx.release.cta b, 1                                     ;
+ cp.async.bulk.shared::cluster.shared::cta.mbarrier::complete_tx::bytes d, s, b ;
+ ld.weak.shared::cta r1, d                                                      ;
+exists
+(P0:r1 != 5)

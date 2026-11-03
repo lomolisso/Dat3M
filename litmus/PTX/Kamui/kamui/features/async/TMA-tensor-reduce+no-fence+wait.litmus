@@ -1,0 +1,18 @@
+PTX TMA-tensor-reduce+no-fence+wait
+{
+s=0 @cta 0;
+tm=1;
+g=0;
+f=0;
+P0:r2=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                           | P1@cta 1,cluster 0,gpu 0 ;
+ st.weak.shared::cta s, 1                                                           | ld.acquire.gpu r0, f     ;
+ cp.reduce.async.bulk.tensor.1d.global.shared::cta.add.tile.bulk_group g, s, tm, r2 | ld.weak.global r1, g     ;
+ cp.async.bulk.commit_group                                                         |                          ;
+ cp.async.bulk.wait_group 0                                                         |                          ;
+ st.release.gpu f, 1                                                                |                          ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

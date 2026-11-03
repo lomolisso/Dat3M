@@ -1,0 +1,10 @@
+PTX LU+dec.cluster+same-cluster
+{
+x=2;
+P0:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                 | P1@cta 1,cluster 0,gpu 0                 ;
+ atom.relaxed.cluster.global.dec r0, x, 5 | atom.relaxed.cluster.global.dec r1, x, 5 ;
+exists
+(P0:r0 == 2 /\ P1:r1 == 2)

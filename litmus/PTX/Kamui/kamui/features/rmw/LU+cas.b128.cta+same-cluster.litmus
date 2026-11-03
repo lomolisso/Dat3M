@@ -1,0 +1,10 @@
+PTX LU+cas.b128.cta+same-cluster
+{
+x=0;
+P0:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0              | P1@cta 1,cluster 0,gpu 0              ;
+ atom.relaxed.cta.cas.b128 r0, x, 0, 1 | atom.relaxed.cta.cas.b128 r1, x, 0, 2 ;
+exists
+(P0:r0 == 0 /\ P1:r1 == 0)

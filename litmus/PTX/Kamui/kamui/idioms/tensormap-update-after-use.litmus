@@ -1,0 +1,17 @@
+PTX tensormap-update-after-use
+{
+tms=0 @cta 0;
+tm=0;
+g=5;
+d=0 @cta 0;
+b=mbarrier(1) @cta 0;
+P0:r2=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                                            ;
+ cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes d, g, b, tm, r2    ;
+ cp.async.bulk.commit_group                                                                          ;
+ cp.async.bulk.wait_group.read 0                                                                     ;
+ st.weak.shared::cta tms, 1                                                                          ;
+ tensormap.cp_fenceproxy.global.shared::cta.tensormap::generic.release.gpu.sync.aligned tm, tms, 128 ;
+exists
+(P0:r2 == 1)

@@ -1,0 +1,13 @@
+PTX pipeline-async-smem-war
+{
+s=5 @cta 0;
+e=mbarrier(1) @cta 0;
+P0:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                      | P1@cta 0,cluster 0,gpu 0      ;
+ mbarrier.try_wait.parity.acquire.cta r0, e, 0 | ld.weak.shared::cta r1, s     ;
+ st.weak.shared::cta s, 7                      | fence.proxy.async.shared::cta ;
+                                               | mbarrier.arrive.release.cta e ;
+exists
+(P0:r0 == 1 /\ P1:r1 == 7)

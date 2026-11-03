@@ -1,0 +1,18 @@
+PTX TMA-load+source-acquire.cluster
+{
+d=0 @cta 1;
+b=mbarrier(1) @cta 1;
+g=0;
+f=0;
+P1:r0=0;
+P1:r1=0;
+P1:r2=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 0,gpu 0                                                  ;
+ st.weak.global g, 5      | ld.acquire.gpu r0, f                                                      ;
+ st.release.gpu f, 1      | mbarrier.arrive.expect_tx.release.cta b, 1                                ;
+                          | cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes d, g, b ;
+                          | mbarrier.try_wait.parity.acquire.cta r1, b, 0                             ;
+                          | ld.weak.shared::cta r2, d                                                 ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 1 /\ P1:r2 != 5)

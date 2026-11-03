@@ -1,0 +1,18 @@
+PTX cluster-init+remote-tma
+{
+g=5;
+d0=0 @cta 0;
+f0=mbarrier() @cta 0;
+P0:r0=0;
+P0:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                       | P1@cta 1,cluster 0,gpu 0                                                    ;
+ mbarrier.init.shared::cta f0, 1                | barrier.cluster.arrive.relaxed                                              ;
+ fence.mbarrier_init.release.cluster            | barrier.cluster.wait                                                        ;
+ barrier.cluster.arrive.relaxed                 | cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes d0, g, f0 ;
+ barrier.cluster.wait                           |                                                                             ;
+ mbarrier.arrive.expect_tx.release.cta f0, 1    |                                                                             ;
+ mbarrier.try_wait.parity.acquire.cta r0, f0, 0 |                                                                             ;
+ ld.weak.shared::cta r1, d0                     |                                                                             ;
+exists
+(P0:r0 == 1 /\ P0:r1 != 5)

@@ -1,0 +1,16 @@
+PTX rs-mainloop-war+ldmatrix
+{
+g=7;
+d=5 @cta 0;
+c=0 @cta 0;
+e=mbarrier(1) @cta 0;
+f=mbarrier(1) @cta 0;
+P0:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                  | P1@cta 0,cluster 0,gpu 0                       ;
+ mbarrier.try_wait.parity.acquire.cta r0, e, 0                             | ldmatrix.sync.aligned.m8n8.x1.shared.b16 r1, d ;
+ mbarrier.arrive.expect_tx.release.cta f, 1                                | mbarrier.arrive.release.cta e                  ;
+ cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes d, g, f |                                                ;
+exists
+(P0:r0 == 1 /\ P1:r1 == 7)

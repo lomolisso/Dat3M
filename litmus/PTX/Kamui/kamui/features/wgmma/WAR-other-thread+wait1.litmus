@@ -1,0 +1,14 @@
+PTX WAR-other-thread+wait1
+{
+a=1 @cta 0;
+c=0 @cta 0;
+P0:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0              | P1@cta 0,cluster 0,gpu 0 ;
+ wgmma.fence.sync.aligned              | bar.sync 0               ;
+ wgmma.mma_async.sync.aligned r0, a, c | st.weak.shared::cta a, 2 ;
+ wgmma.commit_group.sync.aligned       |                          ;
+ wgmma.wait_group.sync.aligned 1       |                          ;
+ bar.sync 0                            |                          ;
+exists
+(P0:r0 == 2)

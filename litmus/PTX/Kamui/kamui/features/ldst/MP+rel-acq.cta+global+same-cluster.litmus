@@ -1,0 +1,12 @@
+PTX MP+rel-acq.cta+global+same-cluster
+{
+x=0;
+f=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0   | P1@cta 1,cluster 0,gpu 0    ;
+ st.weak.global x, 1        | ld.acquire.cta.global r0, f ;
+ st.release.cta.global f, 1 | ld.weak.global r1, x        ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

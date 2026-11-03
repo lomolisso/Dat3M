@@ -1,0 +1,16 @@
+PTX TMA-store-reuse+no-fence+no-wait
+{
+s=0 @cta 0;
+g=0;
+f=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                         | P1@cta 1,cluster 0,gpu 0 ;
+ st.weak.shared::cta s, 1                         | ld.acquire.gpu r0, f     ;
+ cp.async.bulk.global.shared::cta.bulk_group g, s | ld.weak.global r1, g     ;
+ cp.async.bulk.commit_group                       |                          ;
+ st.weak.shared::cta s, 2                         |                          ;
+ st.release.gpu f, 1                              |                          ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 2)

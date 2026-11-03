@@ -1,0 +1,14 @@
+PTX MP+discard+same-cta
+{
+x=0;
+f=0;
+z=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 0,cluster 0,gpu 0 ;
+ st.weak.global x, 1      | ld.acquire.gpu r0, f     ;
+ st.release.gpu f, 1      | discard.global.L2 z, 128 ;
+                          | ld.weak.global r1, x     ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

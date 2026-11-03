@@ -1,0 +1,11 @@
+PTX value+createpolicy
+{
+x=0;
+P0:r9=0;
+P0:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0                           ;
+ createpolicy.fractional.L2::evict_last.b64 r9, 1.0 ;
+ ld.weak.global r0, x                               ;
+exists
+(P0:r0 != 0)

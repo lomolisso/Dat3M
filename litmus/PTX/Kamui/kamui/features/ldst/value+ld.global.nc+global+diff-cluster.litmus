@@ -1,0 +1,9 @@
+PTX value+ld.global.nc+global+diff-cluster
+{
+x=0;
+P1:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 1,gpu 0 ;
+ st.weak.global x, 1      | ld.global.nc r0, x       ;
+exists
+(P1:r0 == 7)

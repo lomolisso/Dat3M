@@ -1,0 +1,13 @@
+PTX discard+other-location+same-cta
+{
+y=0;
+x=0;
+z=0;
+P0:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 0,cluster 0,gpu 0 ;
+ st.weak.global y, 1      | st.weak.global z, 1      ;
+ discard.global.L2 x, 128 |                          ;
+ ld.weak.global r0, y     |                          ;
+exists
+(P0:r0 != 1)

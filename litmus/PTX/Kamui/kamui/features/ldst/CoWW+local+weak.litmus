@@ -1,0 +1,11 @@
+PTX CoWW+local+weak
+{
+l=0;
+P0:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0 ;
+ st.weak.local l, 1       ;
+ st.weak.local l, 2       ;
+ ld.weak.local r0, l      ;
+exists
+(P0:r0 == 1)

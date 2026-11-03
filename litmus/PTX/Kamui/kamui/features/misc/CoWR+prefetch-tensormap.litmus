@@ -1,0 +1,12 @@
+PTX CoWR+prefetch-tensormap
+{
+tm=1;
+x=0;
+P0:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0 ;
+ st.weak.global x, 1      ;
+ prefetch.tensormap tm    ;
+ ld.weak.global r0, x     ;
+exists
+(P0:r0 == 0)

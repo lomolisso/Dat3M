@@ -1,0 +1,11 @@
+PTX value+bulk-prefetch-tensor
+{
+tm=1;
+x=0;
+P0:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0                           ;
+ cp.async.bulk.prefetch.tensor.1d.L2.global.tile tm ;
+ ld.weak.global r0, x                               ;
+exists
+(P0:r0 != 0)

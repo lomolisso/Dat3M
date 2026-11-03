@@ -1,0 +1,13 @@
+PTX TMA-tensor-multicast+no-wait.cta
+{
+g=5;
+tm=1;
+d=0 @cta 0;
+b=mbarrier(1) @cta 0;
+P0:r2=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                                                            | P1@cta 0,cluster 0,gpu 0  ;
+ cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes.multicast::cluster d, g, b, tm, r2 | ld.weak.shared::cta r1, d ;
+exists
+(P1:r1 != 5)

@@ -1,0 +1,14 @@
+PTX MP+bulk-prefetch-tensor+rel-acq+same-cluster
+{
+tm=1;
+x=0;
+f=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 0,gpu 0                           ;
+ st.weak.global x, 1      | cp.async.bulk.prefetch.tensor.1d.L2.global.tile tm ;
+ st.release.gpu f, 1      | ld.acquire.gpu r0, f                               ;
+                          | ld.weak.global r1, x                               ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

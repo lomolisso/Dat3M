@@ -1,0 +1,13 @@
+PTX TMA-tensor-tile+map-no-fence.cta
+{
+g=5;
+tm=1;
+d=0 @cta 0;
+b=mbarrier(1) @cta 0;
+P0:r2=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                                         ;
+ tensormap.replace.tile.global_address.global.b1024.b64 tm, 2                                     ;
+ cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes d, g, b, tm, r2 ;
+exists
+(P0:r2 == 1)

@@ -1,0 +1,12 @@
+PTX MP+relaxed.cluster+dsmem-remote-writer
+{
+x=0 @cta 1;
+f=0 @cta 1;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                | P1@cta 1,cluster 0,gpu 0             ;
+ st.weak.shared::cluster x, 1            | ld.relaxed.cluster.shared::cta r0, f ;
+ st.relaxed.cluster.shared::cluster f, 1 | ld.weak.shared::cta r1, x            ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

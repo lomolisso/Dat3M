@@ -1,0 +1,14 @@
+PTX RAW-bar+fence
+{
+a=0 @cta 0;
+c=0 @cta 0;
+P1:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0      | P1@cta 0,cluster 0,gpu 0              ;
+ st.weak.shared::cta a, 1      | bar.sync 0                            ;
+ fence.proxy.async.shared::cta | wgmma.fence.sync.aligned              ;
+ bar.sync 0                    | wgmma.mma_async.sync.aligned r0, a, c ;
+                               | wgmma.commit_group.sync.aligned       ;
+                               | wgmma.wait_group.sync.aligned 0       ;
+exists
+(P1:r0 == 0)

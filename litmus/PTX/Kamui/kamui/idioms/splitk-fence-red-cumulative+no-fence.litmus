@@ -1,0 +1,12 @@
+PTX splitk-fence-red-cumulative+no-fence
+{
+w=0;
+l=0;
+P2:r0=0;
+P3:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 0,cluster 0,gpu 0 | P2@cta 1,cluster 0,gpu 0 | P3@cta 1,cluster 0,gpu 0 ;
+ st.weak.global w, 1      | bar.sync 1, 2            | ld.acquire.gpu r0, l     | bar.sync 1, 2            ;
+ bar.sync 1, 2            | red.relaxed.gpu.add l, 1 | bar.sync 1, 2            | ld.weak.global r1, w     ;
+exists
+(P2:r0 == 1 /\ P3:r1 == 0)

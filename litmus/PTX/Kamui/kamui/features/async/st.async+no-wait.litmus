@@ -1,0 +1,10 @@
+PTX st.async+no-wait
+{
+d=0 @cta 1;
+b=mbarrier(1) @cta 1;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                          | P1@cta 1,cluster 0,gpu 0  ;
+ st.async.shared::cluster.mbarrier::complete_tx::bytes.b32 d, 1, b | ld.weak.shared::cta r1, d ;
+exists
+(P1:r1 == 1)

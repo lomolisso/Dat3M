@@ -1,0 +1,12 @@
+PTX tma-store-epilogue+no-proxy-fence
+{
+s=0 @cta 0;
+g=9;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 0,cluster 0,gpu 0                         ;
+ st.weak.shared::cta s, 1 | bar.sync 1, 2                                    ;
+ bar.sync 1, 2            | cp.async.bulk.global.shared::cta.bulk_group g, s ;
+                          | cp.async.bulk.commit_group                       ;
+                          | cp.async.bulk.wait_group.read 0                  ;
+exists
+(g == 0)

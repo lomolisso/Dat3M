@@ -1,0 +1,17 @@
+PTX multicast+reader0.cta
+{
+g=5;
+d0=0 @cta 0;
+d1=0 @cta 1;
+b0=mbarrier(1) @cta 0;
+b1=mbarrier(1) @cta 1;
+P0:r0=0;
+P0:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                                             | P1@cta 1,cluster 0,gpu 0                    ;
+ mbarrier.arrive.expect_tx.release.cta b0, 1                                                          | mbarrier.arrive.expect_tx.release.cta b1, 1 ;
+ cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes.multicast::cluster d0+d1, g, b0+b1 |                                             ;
+ mbarrier.try_wait.parity.acquire.cta r0, b0, 0                                                       |                                             ;
+ ld.weak.shared::cta r1, d0                                                                           |                                             ;
+exists
+(P0:r0 == 1 /\ P0:r1 != 5)

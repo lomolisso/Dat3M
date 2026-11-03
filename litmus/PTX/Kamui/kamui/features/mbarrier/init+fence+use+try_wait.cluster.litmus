@@ -1,0 +1,15 @@
+PTX init+fence+use+try_wait.cluster
+{
+b=mbarrier() @cta 0;
+P0:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0                      | P1@cta 1,cluster 0,gpu 0                          ;
+ mbarrier.init.shared::cta b, 1                | barrier.cluster.arrive.relaxed                    ;
+ fence.mbarrier_init.release.cluster           | barrier.cluster.wait                              ;
+ barrier.cluster.arrive.relaxed                | mbarrier.arrive.release.cluster.shared::cluster b ;
+ barrier.cluster.wait                          | barrier.cluster.arrive                            ;
+ barrier.cluster.arrive                        | barrier.cluster.wait                              ;
+ barrier.cluster.wait                          |                                                   ;
+ mbarrier.try_wait.parity.acquire.cta r0, b, 0 |                                                   ;
+exists
+(P0:r0 == 0)

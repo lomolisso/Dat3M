@@ -1,0 +1,13 @@
+PTX reduce+fence
+{
+s=0 @cta 0;
+g=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                        | P1@cta 1,cluster 0,gpu 0        ;
+ st.weak.shared::cta s, 1                                        | red.relaxed.gpu.global.add g, 1 ;
+ fence.proxy.async.shared::cta                                   |                                 ;
+ cp.reduce.async.bulk.global.shared::cta.bulk_group.add.u32 g, s |                                 ;
+ cp.async.bulk.commit_group                                      |                                 ;
+ cp.async.bulk.wait_group 0                                      |                                 ;
+exists
+(g == 1)

@@ -1,0 +1,11 @@
+PTX CoWR+ldu+global+diff-cluster
+{
+x=0;
+y=0;
+P0:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 1,gpu 0 ;
+ st.weak.global x, 1      | st.weak.global y, 1      ;
+ ldu.global r0, x         |                          ;
+exists
+(P0:r0 == 0)

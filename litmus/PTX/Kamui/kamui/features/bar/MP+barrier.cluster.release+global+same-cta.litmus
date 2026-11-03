@@ -1,0 +1,11 @@
+PTX MP+barrier.cluster.release+global+same-cta
+{
+x=0;
+P1:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0       | P1@cta 0,cluster 0,gpu 0     ;
+ st.weak x, 1                   | barrier.cluster.arrive       ;
+ barrier.cluster.arrive.release | barrier.cluster.wait.acquire ;
+ barrier.cluster.wait           | ld.weak r0, x                ;
+exists
+(P1:r0 == 0)

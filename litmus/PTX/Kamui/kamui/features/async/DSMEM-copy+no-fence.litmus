@@ -1,0 +1,14 @@
+PTX DSMEM-copy+no-fence
+{
+s=0 @cta 0;
+d=0 @cta 1;
+b=mbarrier(1) @cta 1;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                       | P1@cta 1,cluster 0,gpu 0                          ;
+ st.weak.shared::cta s, 5                                                       | mbarrier.arrive.expect_tx.release.cta b, 1        ;
+ cp.async.bulk.shared::cluster.shared::cta.mbarrier::complete_tx::bytes d, s, b | mbarrier.try_wait.parity.acquire.cluster r0, b, 0 ;
+                                                                                | ld.weak.shared::cta r1, d                         ;
+exists
+(P1:r0 == 1 /\ P1:r1 != 5)

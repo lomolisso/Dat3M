@@ -1,0 +1,16 @@
+PTX TMA-tensor-im2col+reader.cluster
+{
+g=5;
+tm=1;
+d=0 @cta 1;
+b=mbarrier(1) @cta 1;
+P0:r2=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                                           | P1@cta 1,cluster 0,gpu 0                          ;
+ cp.async.bulk.tensor.3d.shared::cluster.global.im2col.mbarrier::complete_tx::bytes d, g, b, tm, r2 | mbarrier.arrive.expect_tx.release.cta b, 1        ;
+                                                                                                    | mbarrier.try_wait.parity.acquire.cluster r0, b, 0 ;
+                                                                                                    | ld.weak.shared::cta r1, d                         ;
+exists
+(P1:r0 == 1 /\ P1:r1 != 5)

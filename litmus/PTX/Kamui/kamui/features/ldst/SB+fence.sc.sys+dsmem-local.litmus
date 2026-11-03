@@ -1,0 +1,13 @@
+PTX SB+fence.sc.sys+dsmem-local
+{
+x=0 @cta 0;
+y=0 @cta 0;
+P0:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0             | P1@cta 0,cluster 0,gpu 0             ;
+ st.relaxed.sys.shared::cluster x, 1  | st.relaxed.sys.shared::cluster y, 1  ;
+ fence.sc.sys                         | fence.sc.sys                         ;
+ ld.relaxed.sys.shared::cluster r0, y | ld.relaxed.sys.shared::cluster r1, x ;
+exists
+(P0:r0 == 0 /\ P1:r1 == 0)

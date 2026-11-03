@@ -1,0 +1,10 @@
+PTX pdl-early-trigger+war
+{
+x=0;
+P0:r0=0;
+}
+ P0@cta 0,gpu 0,grid 0            | P1@cta 0,gpu 0,grid 1 ;
+ griddepcontrol.launch_dependents | griddepcontrol.wait   ;
+ ld.weak.global r0, x             | st.weak.global x, 1   ;
+exists
+(P0:r0 == 1)

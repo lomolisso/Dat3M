@@ -1,0 +1,10 @@
+PTX arrive-no-acquire.1+global
+{
+y=0;
+P0:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 0,cluster 0,gpu 0 ;
+ bar.arrive 1, 2          | st.weak y, 1             ;
+ ld.weak r0, y            | bar.sync 1, 2            ;
+exists
+(P0:r0 == 0)

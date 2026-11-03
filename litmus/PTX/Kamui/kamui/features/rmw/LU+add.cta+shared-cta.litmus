@@ -1,0 +1,10 @@
+PTX LU+add.cta+shared-cta
+{
+x=0 @cta 0;
+P0:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                  | P1@cta 0,cluster 0,gpu 0                  ;
+ atom.relaxed.cta.shared::cta.add r0, x, 1 | atom.relaxed.cta.shared::cta.add r1, x, 1 ;
+exists
+(P0:r0 == 0 /\ P1:r1 == 0)

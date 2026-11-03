@@ -1,0 +1,11 @@
+PTX MP+barrier.sync.aligned.1+shared
+{
+x=0 @cta 0;
+y=0 @cta 0;
+P1:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 0,cluster 0,gpu 0  ;
+ st.weak.shared::cta x, 1 | barrier.sync.aligned 1    ;
+ barrier.sync.aligned 1   | ld.weak.shared::cta r0, x ;
+exists
+(P1:r0 == 0)

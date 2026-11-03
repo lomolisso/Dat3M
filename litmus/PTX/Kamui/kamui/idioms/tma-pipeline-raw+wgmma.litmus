@@ -1,0 +1,17 @@
+PTX tma-pipeline-raw+wgmma
+{
+g=5;
+d=0 @cta 0;
+c=0 @cta 0;
+f=mbarrier(1) @cta 0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                  | P1@cta 0,cluster 0,gpu 0                      ;
+ mbarrier.arrive.expect_tx.release.cta f, 1                                | mbarrier.try_wait.parity.acquire.cta r0, f, 0 ;
+ cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes d, g, f | wgmma.fence.sync.aligned                      ;
+                                                                           | wgmma.mma_async.sync.aligned r1, d, c         ;
+                                                                           | wgmma.commit_group.sync.aligned               ;
+                                                                           | wgmma.wait_group.sync.aligned 0               ;
+exists
+(P1:r0 == 1 /\ P1:r1 != 5)

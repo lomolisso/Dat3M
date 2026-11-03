@@ -1,0 +1,12 @@
+PTX MP+cp.async.ca+bar.sync
+{
+g=5;
+d=0 @cta 0;
+P1:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0       | P1@cta 0,cluster 0,gpu 0 ;
+ cp.async.ca.shared.global d, g | bar.sync 0               ;
+ cp.async.wait_all              | ld.weak.shared r0, d     ;
+ bar.sync 0                     |                          ;
+exists
+(P1:r0 != 5)

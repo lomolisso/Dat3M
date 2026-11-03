@@ -1,0 +1,20 @@
+PTX tma-multicast-war+remote-arrive.cluster
+{
+g=7;
+d0=5 @cta 0;
+d1=5 @cta 1;
+c1=0 @cta 1;
+e0=mbarrier(1) @cta 0;
+f0=mbarrier(1) @cta 0;
+f1=mbarrier(1) @cta 1;
+P0:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                                             | P1@cta 1,cluster 0,gpu 0                           | P2@cta 1,cluster 0,gpu 0                    ;
+ mbarrier.try_wait.parity.acquire.cluster r0, e0, 0                                                   | wgmma.fence.sync.aligned                           | mbarrier.arrive.expect_tx.release.cta f1, 1 ;
+ mbarrier.arrive.expect_tx.release.cta f0, 1                                                          | wgmma.mma_async.sync.aligned r1, d1, c1            |                                             ;
+ cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes.multicast::cluster d0+d1, g, f0+f1 | wgmma.commit_group.sync.aligned                    |                                             ;
+                                                                                                      | wgmma.wait_group.sync.aligned 0                    |                                             ;
+                                                                                                      | mbarrier.arrive.release.cluster.shared::cluster e0 |                                             ;
+exists
+(P0:r0 == 1 /\ P1:r1 == 7)

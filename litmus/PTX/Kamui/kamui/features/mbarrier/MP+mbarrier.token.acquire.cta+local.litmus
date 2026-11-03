@@ -1,0 +1,14 @@
+PTX MP+mbarrier.token.acquire.cta+local
+{
+b=mbarrier(2) @cta 0;
+x=0;
+P1:r5=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0      | P1@cta 0,cluster 0,gpu 0                 ;
+ st.weak x, 1                  | mbarrier.arrive.release.cta r5, b        ;
+ mbarrier.arrive.release.cta b | mbarrier.test_wait.acquire.cta r0, b, r5 ;
+                               | ld.weak r1, x                            ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)
