@@ -18,6 +18,7 @@ PTX
 // State space tags: GLOBAL, SHARED, SHARED_CTA (shared memory of the accessing thread's CTA), LOCAL, CONST, PARAM
 // Other tags: VOL (volatile), MMIO (mmio), both also RLX and SYS (M8, M9);
 //             WHOLE / PART: the access covers every granule / a single granule of a location with several (M14)
+//             MBAR: an access to an mbarrier object (M32), MBAR_INIT: mbarrier.init; UB: undefined behaviour
 
 (*******************)
 (*   Auxiliaries   *)
@@ -109,8 +110,11 @@ let cause = proxy-preserved-cause-base | (observation; proxy-preserved-cause-bas
    (M16). ub relates all events if the execution has a mixed-size data race, and nothing otherwise. *)
 let conflict = (W * M) | (M * W)
 let mixed-size-race = (conflict & partial-overlap) \ (cause | cause^-1)
+// Other undefined behaviour executes a UB event (e.g. an operation on an invalid mbarrier object). It is only
+// reported: whether it happens depends on the values read, so it must not relax the axioms that constrain them (M35).
 let ub = (_ * _); mixed-size-race; (_ * _)
 flag ~empty mixed-size-race as mixed-size-data-race
+flag ~empty [UB] as undefined-behaviour
 
 (******************************)
 (*  PTX Memory Model Axioms   *)

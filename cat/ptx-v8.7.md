@@ -466,6 +466,83 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
 - **Tests.** `Kamui/kamui/ptx87/barrier-cluster/*`, `Kamui/kamui/hand/MP+barrier.cluster*`
   (`MP+barrier.cluster-relaxed+fence+same-cluster` forbidden, `MP+barrier.cluster-relaxed+fence.cta` allowed).
 
+### M32. mbarrier objects as atomic operations on one location
+
+- **Question.** Chapter 8 does not mention mbarrier objects except in two examples of patterns, and 8.9.4 does not say
+  how arrivals synchronize with waits (gaps 4, 5). What memory operations are the mbarrier instructions?
+- **Manual.** 6834: release pattern "E.g.: st.release [M]; or atom.acq_rel [M]; or mbarrier.arrive.release [M];".
+  6851: acquire pattern "E.g.: ld.acquire [M]; or atom.acq_rel [M]; or mbarrier.test_wait.acquire [M];".
+  24535-24536: "mbarrier.arrive_drop operation with .release qualifier forms the release pattern". 24417-24418: the
+  state returned by `mbarrier.arrive` captures "the phase of the mbarrier object prior to the arrive-on operation".
+  24799-24802: when a wait with acquire semantics returns True, "All memory accesses (except async operations)
+  requested prior, in program order, to mbarrier.arrive having release semantics during the completed phase by the
+  participating threads of the CTA are performed and are visible to the executing thread." 24065-24086 (phase
+  completion), 24087-24104 (arrive-on).
+- **Alternatives.** (a) the object is one memory location, and `arrive`, `arrive_drop`, `arrive.expect_tx`,
+  `expect_tx`, `complete_tx` are atomic read-modify-write operations of its whole state (with the instruction's
+  semantics and scope), `test_wait`/`try_wait` reads of it; (b) a special synchronization relation from every arrival
+  of a phase to the waits that see the phase complete.
+- **Choice.** (a): it is what the examples of 6834 and 6851 say, and chapter 8 then gives the rest: a wait that reads
+  the state written by the last arrival of a phase is preceded in observation order by every earlier arrival of the
+  phase (each one read the previous state), so the release arrivals of all threads synchronize with the acquiring
+  wait; relaxed arrivals do not; the scopes decide whether a remote arrival (another CTA, `.shared::cluster`)
+  synchronizes. The state (valid, phase, expected count, pending count, tx-count) is packed into one integer; in this
+  implementation each count must stay below 64 and the tx-count between -32 and 31. Defaults: arrivals `.release`,
+  `expect_tx`/`complete_tx` `.relaxed`, waits `.acquire`, scope `.cta`; transaction counts are in copied locations
+  (test dialect).
+- **Tests.** `Kamui/kamui/ptx87/mbarrier/*`, `Kamui/kamui/hand/MP+*mbarrier*`. With (b) the remote-arrival tests could
+  differ: `MP+mbarrier-remote-arrive.cta` and `MP+mbarrier-remote-arrive+wait.cta` are allowed here because a `.cta`
+  scope does not include the other CTA.
+
+### M33. mbarrier waits
+
+- **Question.** A wait reads the object whether or not it returns True; when is it an acquire, and what is the state
+  token?
+- **Manual.** 24784-24785: "When mbarrier.test_wait and mbarrier.try_wait operations with .acquire qualifier returns
+  True, they form the acquire pattern". 24746-24750: `test_wait` is non-blocking, `try_wait` "potentially blocking"
+  until the phase completes or a time limit. 24757-24762: the tested phase is given by a state token "returned by an
+  mbarrier.arrive instruction on the same mbarrier object during the current or the immediately preceding phase" or
+  by a parity.
+- **Choice.** A `.acquire` wait reads the state with acquire semantics when the tested phase is complete, and with
+  relaxed semantics otherwise (Dartagnan picks one branch and assumes the matching outcome). `try_wait` behaves like
+  `test_wait`: the time limit is not observable in a litmus test. The token is the phase number read by the arrive;
+  a token wait returns True when the phase differs from it, a parity wait when the phase's parity differs from the
+  given one. Using a token or parity from an older phase is not detected.
+- **Tests.** `Kamui/kamui/ptx87/mbarrier/mbarrier-wait-false+no-sync`, `MP+mbarrier-token`, `mbarrier-parity-1`,
+  `mbarrier-phase-incomplete`; `hand/MP+mbarrier-rel-acq-try_wait.cta+same-cta`.
+
+### M34. mbarrier initialization, invalidation and other rules
+
+- **Question.** `mbarrier.init` and `mbarrier.inval` have no stated memory semantics (gap 19); some rules have no
+  stated consequence.
+- **Manual.** 24162-24169: init sets the phase to 0, both counts to `count`, the tx-count to 0. 24178-24181: init on a
+  valid object is undefined. 23925-23926: "Performing any mbarrier operation except mbarrier.init on an uninitialized
+  mbarrier object results in undefined behavior." 24027-24029: "For each phase of the mbarrier object, at least one
+  test_wait or try_wait operation must be performed which returns True for waitComplete before an arrive-on operation
+  in the subsequent phase." 24421-24423: an arrive on a remote object "cannot return a value. Sink symbol '_' is
+  mandatory".
+- **Choice.** `init` and `inval` are weak writes of the initial and of an invalid state (generic proxy); the
+  declaration `b=mbarrier(n)` gives the initial state before the threads start, `b=mbarrier()` an invalid one. The
+  object must be in shared memory; `init`, `inval` and the waits must name an object of the executing CTA (otherwise
+  the test is rejected). Not modelled: init on a valid object, the rule of 24027-24029, and the sink rule (the dialect
+  lets a remote arrive return the token).
+- **Tests.** `Kamui/kamui/ptx87/mbarrier-init/*`.
+
+### M35. Undefined behaviour from misusing an mbarrier object
+
+- **Question.** An operation on an invalid or uninitialized object is undefined behaviour. Should it switch the axioms
+  off, like a mixed-size data race (M16)?
+- **Manual.** 23925-23926, 24224-24225 (operations on an object that is not valid are undefined).
+- **Alternatives.** (a) the axioms do not apply to such an execution; (b) the execution is reported (flag
+  `undefined-behaviour` with `--property=cat_spec`) and still constrained by the axioms.
+- **Choice.** (b). Whether the object is valid depends on the value the operation reads. With (a), an execution in
+  which an arrive reads a stale invalid state (after `mbarrier.init` in the same thread) would make itself undefined
+  and thereby allow the stale read: the axioms would never constrain mbarrier objects initialized in a thread. A
+  mixed-size data race is different: it is defined by causality, not by a value. Values still come from writes, so
+  `r0 == 7` outcomes stay forbidden.
+- **Tests.** `Kamui/kamui/ptx87/mbarrier-init/mbarrier-init+same-thread` (forbidden; allowed under (a)),
+  `mbarrier-init+inval+use` (forbidden, flagged).
+
 ## Tests Dartagnan cannot decide
 
 The results below are the same with the PTX 7.5 model; they are limits of Dartagnan, not of the model.
