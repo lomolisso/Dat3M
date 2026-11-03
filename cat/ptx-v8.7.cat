@@ -24,8 +24,38 @@ PTX
 (*   Auxiliaries   *)
 (*******************)
 
-// 8.2.4: the operations of one instruction are performed in an unspecified order (M15, M18)
-let po = po \ si
+// 8.2.4: the operations of one instruction are performed in an unspecified order (M15, M18): Dartagnan's po does
+// not order events of the same instruction (si)
+let po-text = po
+let po0 = po-text
+// 8.9.1.1: asynchronous operations (AOP) are not in program order (M39). Their own accesses are ordered (read,
+// write, complete-tx; the events of the k-th asynchronous operation carry the tag AOPk); a wait orders the operations of the async-groups it completes before itself (M40); the
+// arrive-on of cp.async.mbarrier.arrive follows all prior cp.async of its thread (6894-6896).
+let async-internal = ([AOP0]; po-text; [AOP0]) | ([AOP1]; po-text; [AOP1]) | ([AOP2]; po-text; [AOP2]) | ([AOP3]; po-text; [AOP3]) |
+                     ([AOP4]; po-text; [AOP4]) | ([AOP5]; po-text; [AOP5]) | ([AOP6]; po-text; [AOP6]) | ([AOP7]; po-text; [AOP7]) |
+                     ([AOP8]; po-text; [AOP8]) | ([AOP9]; po-text; [AOP9]) | ([AOP10]; po-text; [AOP10]) | ([AOP11]; po-text; [AOP11]) |
+                     ([AOP12]; po-text; [AOP12]) | ([AOP13]; po-text; [AOP13]) | ([AOP14]; po-text; [AOP14]) | ([AOP15]; po-text; [AOP15])
+let completion = ([AOP & AG0]; po0; [WAIT_AG0]) | ([AOP & BAG0]; po0; [WAIT_BAG0])
+                 | ([AOP & BAG0 & R & ~RMW]; po0; [WAITR_BAG0])
+                 | ([AOP & AG1]; po0; [WAIT_AG1]) | ([AOP & BAG1]; po0; [WAIT_BAG1])
+                 | ([AOP & BAG1 & R & ~RMW]; po0; [WAITR_BAG1])
+                 | ([AOP & AG2]; po0; [WAIT_AG2]) | ([AOP & BAG2]; po0; [WAIT_BAG2])
+                 | ([AOP & BAG2 & R & ~RMW]; po0; [WAITR_BAG2])
+                 | ([AOP & AG3]; po0; [WAIT_AG3]) | ([AOP & BAG3]; po0; [WAIT_BAG3])
+                 | ([AOP & BAG3 & R & ~RMW]; po0; [WAITR_BAG3])
+                 | ([AOP & AG4]; po0; [WAIT_AG4]) | ([AOP & BAG4]; po0; [WAIT_BAG4])
+                 | ([AOP & BAG4 & R & ~RMW]; po0; [WAITR_BAG4])
+                 | ([AOP & AG5]; po0; [WAIT_AG5]) | ([AOP & BAG5]; po0; [WAIT_BAG5])
+                 | ([AOP & BAG5 & R & ~RMW]; po0; [WAITR_BAG5])
+                 | ([AOP & AG6]; po0; [WAIT_AG6]) | ([AOP & BAG6]; po0; [WAIT_BAG6])
+                 | ([AOP & BAG6 & R & ~RMW]; po0; [WAITR_BAG6])
+                 | ([AOP & AG7]; po0; [WAIT_AG7]) | ([AOP & BAG7]; po0; [WAIT_BAG7])
+                 | ([AOP & BAG7 & R & ~RMW]; po0; [WAITR_BAG7])
+let cpasync-arrive-order = [AOP & CPASYNC]; po0; [CPASYNC_ARRIVE]
+let po = ((po0 \ ((AOP * _) | (_ * AOP))) | async-internal | completion | cpasync-arrive-order)+
+// An asynchronous operation is ordered after the prior instructions of its thread (6886), but this order does not
+// extend through it to other operations (6899-6901): it is only used to reach the operation's own accesses.
+let issue = [~AOP]; po0; [AOP]
 
 // Coherence order is a partial transitive order (8.9.6); recompute fr from it
 let co = co+
@@ -47,6 +77,8 @@ let same-proxy = GEN * GEN | SUR * SUR | TEX * TEX | CON * CON | ASYNC * ASYNC |
 // The operations are related in program order, or each operation is strong and
 // specifies a scope that includes the thread executing the other operation.
 let ms-scope = (po | po^-1) | ([strong-operation]; sr; [strong-operation])
+              // the complete-tx of an asynchronous operation acts on behalf of the CTA of its mbarrier (M42)
+              | ([AOP & MBAR]; vloc; [MBAR]) | ([MBAR]; vloc; [AOP & MBAR])
 // Two memory operations overlap completely if they access the same granules (M14)
 let partial-overlap = vloc & ((WHOLE * PART) | (PART * WHOLE))
 let complete-overlap = vloc \ partial-overlap
@@ -108,20 +140,25 @@ let fence-space = ([F & ~(GLOBAL | SHARED | SHARED_CTA)] ; (_ * M))
                 | ([F & GLOBAL]; (_ * GLOBAL)) | ([F & SHARED]; (_ * SHARED)) | ([F & SHARED_CTA]; (_ * SHARED_CTA))
 let proxy-fence-ops = ([F & ~TMAP_FENCE & ~ASYNC_FROM_GEN]; (same-proxy & scta); [M]) & fence-space
 let async-from-generic-ops = ([F & ASYNC_FROM_GEN]; scta; [M & ASYNC]) & fence-space
+// The last hop of a path may reach an asynchronous operation through its issue order
+let cbi = cause-base | (cause-base?; issue)
 let proxy-preserved-cause-base
-                = ([GEN]; (vloc & cause-base); [GEN])
-                | ([M]; (same-proxy & scta & vloc & cause-base); [M])
-                | vloc & (cause-base & (proxy-fence-ops^-1); cause-base; [GEN])
-                | vloc & ([GEN]; cause-base; cause-base & proxy-fence-ops)
-                | vloc & (cause-base & (proxy-fence-ops^-1); cause-base; cause-base & proxy-fence-ops)
-                | loc & ([GEN]; cause-base; [F & ALIAS]; cause-base; [GEN])
-                | loc & (cause-base & (proxy-fence-ops^-1); cause-base; [F & ALIAS]; cause-base; [GEN])
-                | loc & ([GEN]; cause-base; [F & ALIAS]; cause-base; cause-base & proxy-fence-ops)
-                | loc & (cause-base & (proxy-fence-ops^-1); cause-base; [F & ALIAS]; cause-base; cause-base & proxy-fence-ops)
-                // generic access -> fence.proxy.async::generic -> async access (uni-directional, M36)
-                | vloc & ([GEN]; cause-base; (cause-base & async-from-generic-ops))
-                // generic write -> tensormap release fence -> tensormap acquire fence -> tensormap read
-                | vloc & ([GEN]; cause-base; [TMAP_FENCE & REL]; cause-base; [TMAP_FENCE & ACQ]; cause-base; [TMAP])
+                = ([GEN]; (vloc & cbi); [GEN])
+                | ([M]; (same-proxy & scta & vloc & cbi); [M])
+                | vloc & (cause-base & (proxy-fence-ops^-1); cbi; [GEN])
+                | vloc & ([GEN]; cause-base; cbi & proxy-fence-ops)
+                | vloc & (cause-base & (proxy-fence-ops^-1); cause-base; cbi & proxy-fence-ops)
+                | loc & ([GEN]; cause-base; [F & ALIAS]; cbi; [GEN])
+                | loc & (cause-base & (proxy-fence-ops^-1); cause-base; [F & ALIAS]; cbi; [GEN])
+                | loc & ([GEN]; cause-base; [F & ALIAS]; cause-base; cbi & proxy-fence-ops)
+                | loc & (cause-base & (proxy-fence-ops^-1); cause-base; [F & ALIAS]; cause-base; cbi & proxy-fence-ops)
+                // generic access -> fence.proxy.async::generic -> async access (uni-directional, M38)
+                | vloc & ([GEN]; cause-base; (cbi & async-from-generic-ops))
+                // generic write -> tensormap release fence -> tensormap acquire fence -> tensormap read (M26)
+                | vloc & ([GEN]; cause-base; [TMAP_FENCE & REL]; cause-base; [TMAP_FENCE & ACQ]; cbi; [TMAP])
+                // the completion of an asynchronous operation is followed by an implicit generic-async proxy fence
+                // (18763-18765, M41)
+                | vloc & ([M & ASYNC]; cause-base; [COMPLETION]; cbi; [GEN])
 
 (* 8.9.5 Causality order *)
 let cause = proxy-preserved-cause-base | (observation; proxy-preserved-cause-base)

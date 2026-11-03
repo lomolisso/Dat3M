@@ -596,6 +596,131 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
   qualifier.
 - **Tests.** None in the corpus.
 
+### M39. Asynchronous operations and program order
+
+- **Question.** Asynchronous operations have no place in causality order (gap 1): how are they ordered with the
+  instructions of their thread?
+- **Manual.** 6884-6890: the operations of `cp.async`, `cp.async.bulk`, `cp.reduce.async.bulk` and
+  `wgmma.mma_async` "are ordered after prior instructions in the same thread (except in the case of
+  wgmma.mma_async), but they are not part of the program order for that thread". 6891-6894: the loads and stores of a
+  `cp.async` "are ordered with respect to each other, but not to those of any other cp.async instructions initiated
+  by the same thread, nor any other instruction subsequently issued by the thread with the exception of
+  cp.async.commit_group or cp.async.mbarrier.arrive". 6897-6901: the implicit complete-tx "is ordered only with
+  respect to the memory operations performed by the same asynchronous instruction, and in particular it does not
+  transitively establish ordering with respect to prior instructions from the issuing thread."
+- **Choice.** The events of an asynchronous operation (its reads, writes, complete-tx, or the arrive-on of
+  `cp.async.mbarrier.arrive`) are created in the issuing thread but removed from program order; they are ordered
+  among themselves (read, write, complete-tx), after the waits that complete them (M40), and the arrive-on of
+  `cp.async.mbarrier.arrive` after all prior `cp.async` of its thread. "Ordered after prior instructions" is an
+  issue order from the earlier instructions to the operation's own accesses, used only as the last step of
+  proxy-preserved base causality: an operation's accesses see the writes before it (with a proxy fence where the
+  proxies differ), but nothing reaches other threads through it. The same applies to `st.async` and `red.async`.
+  Barriers therefore never cover asynchronous operations (22507).
+- **Tests.** `Kamui/kamui/ptx87/async-bulk/TMA-load+complete-tx-not-transitive` (allowed),
+  `cp-async/MP+cp.async.mbarrier.arrive+not-transitive` (allowed), `st-async/MP+st.async+not-transitive` (allowed),
+  `barrier-cluster/MP+barrier.cluster+async-copy` (allowed), `cp-async/cp.async+no-wait` (allowed).
+
+### M40. Completion through async-groups
+
+- **Question.** `cp.async.wait_group`/`wait_all` and `cp.async.bulk.wait_group` make the completed operations'
+  writes visible "to the executing thread". Is that visibility cumulative (passed on by a later release)?
+- **Manual.** 18706-18714: a commit "creates a per-thread async-group containing all prior asynchronous operations
+  ... All async-groups committed by an executing thread always complete in the order in which they were committed."
+  18959-18965: "Writes performed by cp.async operations are made visible to the executing thread only after: The
+  completion of cp.async.wait_all or The completion of cp.async.wait_group on the cp.async-group in which the
+  cp.async belongs to or mbarrier.test_wait returns True". 18973-18974: the waits do "not provide any ordering and
+  visibility guarantees for any other memory operation apart from cp.async." 20216-20220: with `.read`, the wait
+  only covers "reading from the tensormap" and "the reading from their source locations".
+- **Alternatives.** (a) the completed operations precede the wait in program order, so base causality carries them
+  further (a later release of the waiting thread covers them); (b) visible only to the waiting thread.
+- **Choice.** (a): once a write is visible to the thread, a release pattern of that thread "makes prior operations
+  from the current thread visible" (6826-6827), and the transitivity of base causality applies. The commit groups
+  are computed per thread and kind (non-bulk, bulk); `wait_group N` completes all but the N most recent committed
+  groups, `wait_all` commits and waits for everything; `.read` completes only the source reads. Up to 8 groups per
+  thread and kind.
+- **Tests.** `Kamui/kamui/ptx87/async-bulk/TMA-store+wait_group+release` (forbidden; allowed under (b)),
+  `TMA-store+wait_group.read+release`, `TMA-store+wait_group-1*`, `TMA-store+wait_group.read+source-reuse`,
+  `Kamui/kamui/ptx87/cp-async/cp.async+wait_*`, `Kamui/kamui/hand/CoWR*async-bulk*`.
+
+### M41. The implicit generic-async proxy fence at completion
+
+- **Question.** How do the async-proxy writes of a bulk copy become visible to generic-proxy reads?
+- **Manual.** 18763-18765: "The completion of a cp{.reduce}.async.bulk operation is followed by an implicit
+  generic-async proxy fence. So the result of the asynchronous operation is made visible to the generic proxy as
+  soon as its completion is observed." 31554-31556 (the same for `wgmma.mma_async`).
+- **Choice.** A completion event (the complete-tx of the operation, or a wait that completes its group) on the base
+  causality path from an async-proxy access to a generic-proxy access at the same address acts as a proxy fence.
+- **Tests.** Removing this rule makes ten tests allowed: `async-bulk/TMA-load+mbarrier+*` (4), `TMA-multicast`,
+  `TMA-store+wait_group+release`, `TMA-store+wait_group-1+older`, `TMA-store+wait_group.read+source-reuse`,
+  `cp.reduce.async.bulk+wait_group`, `hand/CoWR+fence.proxy.async+async-bulk+same-cta`.
+
+### M42. Who performs the complete-tx of an asynchronous operation
+
+- **Question.** Morally strong operations need scopes that include each other's threads. The complete-tx of a copy
+  has `.release` at `.cluster` scope, but a `.cta` wait (or a `.cta` arrive) in the mbarrier's CTA does not include
+  the issuing thread of another CTA.
+- **Manual.** 19150-19152: "the complete-tx operation on the mbarrier has .release semantics at the .cluster scope".
+  19130-19136 (multicast): "The mbarrier signal is also multicast to the same CTA-relative offset as mbar in the
+  shared memory of the destination CTA." 6788-6790 (morally strong scopes).
+- **Alternatives.** (a) the complete-tx is morally strong with every operation on its mbarrier object (it is
+  performed on behalf of the CTA that owns the object, and the object is only accessible from its cluster); (b) it
+  is performed by the issuing thread, so a `.cta` operation of another CTA is not morally strong with it.
+- **Choice.** (a): the signal is delivered to the destination CTA's mbarrier, and with (b) a copy into another CTA
+  could never be observed by that CTA's default (`.cta`) waits.
+- **Tests.** `Kamui/kamui/ptx87/async-bulk/TMA-multicast`, `st-async/MP+st.async`, `st-async/MP+red.async`
+  (forbidden; allowed under (b)).
+
+### M43. `cp.async.mbarrier.arrive`
+
+- **Question.** What does `cp.async.mbarrier.arrive{.noinc}` do to the mbarrier, and with which semantics?
+- **Manual.** 24634-24637: "Causes an arrive-on operation to be triggered by the system on the mbarrier object upon
+  the completion of all prior cp.async operations initiated by the executing thread." 24640-24644: without `.noinc`
+  "the pending count of the mbarrier object is incremented by 1 prior to the asynchronous arrive-on operation. This
+  results in a zero-net change for the pending count". 24803-24805 (test_wait guarantee for cp.async).
+- **Choice.** An asynchronous arrive-on with release semantics at `.cta` scope, ordered after all prior `cp.async`
+  of the thread and nothing else; with `.noinc` it decrements the pending count, without it the net change is zero
+  (one RMW with count 0; the intermediate increment is not modelled).
+- **Tests.** `Kamui/kamui/ptx87/cp-async/*mbarrier.arrive*`.
+
+### M44. Proxies, units and operands of asynchronous operations
+
+- **Question.** Several details are not stated or only implied (gaps 14, 15).
+- **Manual.** 18756: "The cp{.reduce}.async.bulk operations are performed in the asynchronous proxy". 18831:
+  "cp.async is treated as a weak memory operation". 19394-19398: "Each reduction operation performed by the
+  cp.reduce.async.bulk has individually .relaxed.gpu memory ordering semantics. The load operations in
+  cp.reduce.async.bulk are treated as weak memory operation". 19591: the tensor map "is accessed in tensormap
+  proxy". 17239-17244 (`st.async`: weak store, release complete-tx at `.cluster`).
+- **Choice.** Bulk copies, bulk reductions and tensor copies access memory in the async proxy (their reductions are
+  relaxed `.gpu` RMWs there, so they are not morally strong with generic atomics); `cp.async`, `st.async` and
+  `red.async` use the generic proxy (no text puts them in the async proxy); the complete-tx and the arrive-on access
+  the mbarrier like the other mbarrier operations (generic). A tensor copy first reads its tensor map in the
+  tensormap proxy. Transaction counts count written locations (test dialect). The mbarrier of a copy must be in the
+  CTA of its destination; `cp.async.bulk.global.shared::cta` without `.bulk_group` is read as the bulk-group form.
+- **Tests.** `Kamui/kamui/ptx87/async-bulk/cp.reduce.async.bulk+generic-atomic` (allowed),
+  `2+cp.reduce.async.bulk` (forbidden), `TMA-load+stale-source` (allowed without a proxy fence).
+
+### M45. `st.async` without a completion mechanism and `st.async.release`
+
+- **Question.** Without a completion mechanism, an `st.async`/`red.async` "synchronizes with the end of the CTA",
+  which chapter 8 does not define (gap 13). `st.async.release` (sm_100) is a release store.
+- **Manual.** 17229-17230 and 23394-23395 ("the completion of the store synchronizes with the end of the CTA").
+  17273-17276: "This is a release store to global memory. The store operation is a strong memory operation with
+  .release semantics at the scope specified by .scope."
+- **Choice.** `st.async.release.{gpu,sys}.global` is a release store in program order (its release semantics
+  order the thread's prior operations). The forms without a completion mechanism are accepted with the default
+  `.mbarrier::complete_tx::bytes` only when an mbarrier operand is given; the end of the CTA is not modelled.
+- **Tests.** `Kamui/kamui/ptx87/st-async/MP+st.async.release` (forbidden).
+
+### M46. Undefined behaviour of asynchronous copies (not modelled)
+
+- **Question.** Modifying the source or reading the destination before completion is undefined.
+- **Manual.** 18689-18691: "Once an asynchronous copy operation is initiated, modifying the source memory location
+  or tensor descriptor or reading from the destination memory location before the asynchronous operation completes,
+  exhibits undefined behavior."
+- **Choice.** Not detected: such programs are decided by the axioms (the copy may then read or write either value).
+- **Tests.** `Kamui/kamui/ptx87/cp-async/cp.async+no-wait` reads the destination before completion (allowed either
+  way).
+
 ## Tests Dartagnan cannot decide
 
 The results below are the same with the PTX 7.5 model; they are limits of Dartagnan, not of the model.
