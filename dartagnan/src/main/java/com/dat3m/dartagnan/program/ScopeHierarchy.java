@@ -25,10 +25,11 @@ public class ScopeHierarchy {
         return scopeHierarchy;
     }
 
-    public static ScopeHierarchy ScopeHierarchyForPTX(int gpu, int cta) {
+    public static ScopeHierarchy ScopeHierarchyForPTX(int gpu, int cluster, int cta) {
         ScopeHierarchy scopeHierarchy = new ScopeHierarchy();
         scopeHierarchy.scopeIds.put(Tag.PTX.SYS, 0);
         scopeHierarchy.scopeIds.put(Tag.PTX.GPU, gpu);
+        scopeHierarchy.scopeIds.put(Tag.PTX.CLUSTER, cluster);
         scopeHierarchy.scopeIds.put(Tag.PTX.CTA, cta);
         return scopeHierarchy;
     }

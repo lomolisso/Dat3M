@@ -257,6 +257,7 @@ public final class Tag {
     public static final class PTX {
         // Scopes
         public static final String CTA = "CTA";
+        public static final String CLUSTER = "CLUSTER";
         public static final String GPU = "GPU";
         public static final String SYS = "SYS";
         // Memory orders
@@ -271,6 +272,12 @@ public final class Tag {
         public static final String TEX = "TEX"; // TEXTURE
         public static final String SUR = "SUR"; // SURFACE
         public static final String CON = "CON"; // CONSTANT
+        // Volatile and mmio operations (both are also relaxed at system scope)
+        public static final String VOL = "VOL";
+        public static final String MMIO = "MMIO";
+        // Footprint of an access to a location with several granules: all of them, or a single one
+        public static final String WHOLE = "WHOLE";
+        public static final String PART = "PART";
         // Virtual memory
         public static final String ALIAS = "ALIAS";
         // Barrier Mode
@@ -295,7 +302,7 @@ public final class Tag {
         }
 
         public static List<String> getScopeTags() {
-            return List.of(CTA, GPU, SYS);
+            return List.of(CTA, CLUSTER, GPU, SYS);
         }
     }
 
