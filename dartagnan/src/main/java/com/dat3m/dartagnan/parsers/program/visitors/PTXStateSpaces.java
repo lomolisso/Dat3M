@@ -107,6 +107,11 @@ final class PTXStateSpaces {
         return spaces.get(location) == Space.SHARED && owners.get(location) == places.get(thread).cta();
     }
 
+    // The CTA owning a shared location
+    int getOwner(String location) {
+        return owners.get(location);
+    }
+
     boolean isShared(String location) {
         return spaces.get(location) == Space.SHARED;
     }

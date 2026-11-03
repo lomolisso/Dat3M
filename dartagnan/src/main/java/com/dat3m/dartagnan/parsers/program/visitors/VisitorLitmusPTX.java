@@ -49,6 +49,11 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     private final Map<Integer, Map<String, Integer>> barrierCounts = new HashMap<>();
     // Number of mbarrier waits parsed so far (for unique label and register names)
     private int waitCount = 0;
+    // Number of fresh registers and of asynchronous operations created so far
+    private int asyncCount = 0;
+    private int asyncOperationCount = 0;
+    // Committed async-groups of each thread, per kind ("AG": cp.async, "BAG": bulk operations)
+    private final Map<Integer, Map<String, Integer>> committedGroups = new HashMap<>();
     // Ids of the clusters of threads placed without one
     private static final int IMPLICIT_CLUSTER = 1_000_000;
 
@@ -262,9 +267,11 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         }
         List<Event> events = switch (qualifiers.getName()) {
             case "ld", "ldu", "tld", "suld", "cold" -> parseLoad(qualifiers, operands);
-            case "st", "sust" -> parseStore(qualifiers, operands);
+            case "st", "sust" -> qualifiers.takeFirst("async") ? parseAsyncStore(qualifiers, operands)
+                    : parseStore(qualifiers, operands);
             case "atom", "suatom" -> parseAtom(qualifiers, operands);
-            case "red", "sured" -> parseRed(qualifiers, operands);
+            case "red", "sured" -> qualifiers.takeFirst("async") ? parseAsyncReduction(qualifiers, operands)
+                    : parseRed(qualifiers, operands);
             case "fence", "membar" -> parseFence(qualifiers, operands);
             case "bar", "barrier" -> parseBarrier(qualifiers, operands);
             case "prefetch", "prefetchu", "applypriority" -> parseCacheControl(qualifiers, operands);
@@ -273,6 +280,16 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             case "cp" -> parseCopy(qualifiers, operands);
             default -> throw new ParsingException("Unsupported instruction " + qualifiers.getMnemonic());
         };
+        if (events.stream().anyMatch(e -> e.hasTag(Tag.PTX.AOP))) {
+            // The events of an asynchronous operation are told apart by a tag of their own, not by an instruction
+            // boundary: Dartagnan's po does not order the events of one instruction, and the model needs their order.
+            if (asyncOperationCount >= Tag.PTX.ASYNC_OPERATIONS) {
+                throw qualifiers.error("Too many asynchronous operations");
+            }
+            final String operation = Tag.PTX.asyncOperation(asyncOperationCount++);
+            events.stream().filter(e -> e.hasTag(Tag.PTX.AOP)).forEach(e -> e.addTags(operation));
+            return append(events, ctx, false);
+        }
         return append(events, ctx);
     }
 
@@ -742,13 +759,30 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         };
         final Expression count = arrive ? (expectTx ? one : amount) : zero;
         final Expression txCount = (expectTx || !arrive) ? amount : zero;
-        final Register result = hasToken ? parseTargetRegisters(q, operands.get(0), 1).get(0)
-                : programBuilder.getOrNewRegister(mainThread, "__mbarrier_token", archType);
-        final PTXMbarrierOp op = new PTXMbarrierOp(result, slot.address(), kind, count, txCount,
+        final Register old = newMbarrierStateRegister();
+        final PTXMbarrierOp op = new PTXMbarrierOp(old, slot.address(), kind, count, txCount,
                 parseMo(defaultIfNull(sem, arrive ? "release" : "relaxed")));
         op.addTags(Tag.PTX.GEN, parseScope(defaultIfNull(scope, "cta")));
         slot.addFootprint(op);
-        return List.of(op);
+        final List<Event> events = new ArrayList<>(List.of(op));
+        if (hasToken) {
+            // the state token is the phase before the arrive-on
+            events.add(EventFactory.newLocal(parseTargetRegisters(q, operands.get(0), 1).get(0),
+                    PTXMbarrierState.phase(old)));
+        }
+        events.addAll(newValidityCheck(old));
+        return events;
+    }
+
+    // Executes an undefined-behaviour event if the mbarrier state read is not a valid object
+    private List<Event> newValidityCheck(Register state) {
+        final Label valid = programBuilder.getOrCreateLabel(mainThread, "__mbarrier_valid" + waitCount++);
+        return List.of(EventFactory.newJump(PTXMbarrierState.isValid(state), valid),
+                new GenericVisibleEvent("undefined_behaviour", Tag.PTX.UB), valid);
+    }
+
+    private Register newMbarrierStateRegister() {
+        return programBuilder.getOrNewRegister(mainThread, "__mbarrier_old" + asyncCount++, archType);
     }
 
     // mbarrier.test_wait{.parity}{.sem}{.scope}{.space} r, b, p and mbarrier.try_wait ...: r = 1 iff the phase given by
@@ -788,10 +822,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         events.add(end);
         events.add(EventFactory.newLocal(result,
                 expressions.makeITE(complete, expressions.makeOne(archType), expressions.makeZero(archType))));
-        final Label valid = programBuilder.getOrCreateLabel(mainThread, "__mbarrier_wait_valid" + id);
-        events.add(EventFactory.newJump(PTXMbarrierState.isValid(state), valid));
-        events.add(new GenericVisibleEvent("undefined_behaviour", Tag.PTX.UB));
-        events.add(valid);
+        events.addAll(newValidityCheck(state));
         return events;
     }
 
@@ -861,17 +892,347 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     }
 
     private List<Event> parseCopy(PTXQualifiers q, List<OperandContext> operands) {
-        if (q.takeFirst("async") && q.takeFirst("bulk") && q.takeFirst("prefetch") && q.takeFirst("L2")) {
-            // cp.async.bulk.prefetch is a hint to prefetch data into the L2 cache
-            q.takeOne(SPACES);
-            q.take("L2::cache_hint");
-            q.checkConsumed();
-            if (operands.isEmpty() || operands.get(0).location() == null || operands.size() > 3) {
-                throw q.error("Expected an address operand");
+        if (q.takeFirst("reduce")) {
+            if (!q.takeFirst("async") || !q.takeFirst("bulk")) {
+                throw new ParsingException("Unsupported instruction " + q.getMnemonic());
             }
+            return parseBulkReduction(q, operands);
+        }
+        if (!q.takeFirst("async")) {
+            throw new ParsingException("Unsupported instruction " + q.getMnemonic());
+        }
+        if (q.takeFirst("bulk")) {
+            if (q.takeFirst("prefetch")) {
+                // cp.async.bulk.prefetch is a hint to prefetch data into the L2 cache
+                q.take("L2");
+                q.takeOne(SPACES);
+                q.take("L2::cache_hint");
+                q.checkConsumed();
+                if (operands.isEmpty() || operands.get(0).location() == null || operands.size() > 3) {
+                    throw q.error("Expected an address operand");
+                }
+                return List.of();
+            }
+            if (q.takeFirst("commit_group")) {
+                q.checkConsumed();
+                checkOperandCount(q, operands, 0);
+                commitGroup("BAG");
+                return List.of();
+            }
+            if (q.takeFirst("wait_group")) {
+                final boolean readOnly = q.take("read");
+                q.checkConsumed();
+                return List.of(newAsyncWait("BAG", parseCount(q, operands), readOnly));
+            }
+            return parseBulkCopy(q, operands);
+        }
+        if (q.takeFirst("commit_group")) {
+            q.checkConsumed();
+            checkOperandCount(q, operands, 0);
+            commitGroup("AG");
             return List.of();
         }
-        throw new ParsingException("Unsupported instruction " + q.getMnemonic());
+        if (q.takeFirst("wait_group")) {
+            q.checkConsumed();
+            return List.of(newAsyncWait("AG", parseCount(q, operands), false));
+        }
+        if (q.takeFirst("wait_all")) {
+            q.checkConsumed();
+            checkOperandCount(q, operands, 0);
+            commitGroup("AG");
+            return List.of(newAsyncWait("AG", 0, false));
+        }
+        if (q.takeFirst("mbarrier")) {
+            return parseCpAsyncMbarrierArrive(q, operands);
+        }
+        return parseCpAsync(q, operands);
+    }
+
+    // cp.async.{ca,cg}.shared{::cta}.global d, g{, size}: a weak copy in the generic proxy, asynchronous to the thread
+    private List<Event> parseCpAsync(PTXQualifiers q, List<OperandContext> operands) {
+        q.takeOne(Set.of("ca", "cg"));
+        final String dstSpace = q.takeOne(Set.of("shared", "shared::cta"));
+        final boolean global = q.take("global");
+        q.takeAll(PTXQualifiers.HINTS);
+        q.checkConsumed();
+        if (dstSpace == null || !global || operands.size() < 2 || operands.size() > 4) {
+            throw q.error("Expected cp.async.{ca,cg}.shared.global d, g{, size}");
+        }
+        final Slot dst = parseSingleSlot(q, operands.get(0), dstSpace, true);
+        final Slot src = parseSingleSlot(q, operands.get(1), "global", false);
+        return newAsyncCopy(src, List.of(dst), Tag.PTX.GEN, List.of(Tag.PTX.CPASYNC, groupTag(q, "AG")));
+    }
+
+    // cp.async.mbarrier.arrive{.noinc}{.shared{::cta}} b: an asynchronous release arrive-on, after all prior cp.async
+    // operations of the thread. Without .noinc the pending count is first incremented by 1: no net change (M43).
+    private List<Event> parseCpAsyncMbarrierArrive(PTXQualifiers q, List<OperandContext> operands) {
+        if (!q.takeFirst("arrive")) {
+            throw new ParsingException("Unsupported instruction " + q.getMnemonic());
+        }
+        final boolean noinc = q.take("noinc");
+        final String space = q.takeOne(Set.of("shared", "shared::cta"));
+        q.take("b64");
+        q.checkConsumed();
+        checkOperandCount(q, operands, 1);
+        final Slot slot = parseMbarrierSlot(q, operands.get(0), space, true);
+        final Expression count = noinc ? expressions.makeOne(archType) : expressions.makeZero(archType);
+        final Register old = newMbarrierStateRegister();
+        final PTXMbarrierOp arrive = new PTXMbarrierOp(old, slot.address(), PTXMbarrierOp.Kind.ARRIVE,
+                count, expressions.makeZero(archType), Tag.PTX.REL);
+        arrive.addTags(Tag.PTX.GEN, Tag.PTX.CTA, Tag.PTX.AOP, Tag.PTX.CPASYNC_ARRIVE);
+        slot.addFootprint(arrive);
+        final List<Event> events = new ArrayList<>(List.of(arrive));
+        events.addAll(newValidityCheck(old));
+        return events;
+    }
+
+    // cp.async.bulk.{shared::cluster,shared::cta}.global.mbarrier::complete_tx::bytes{.multicast::cluster} d, g, b
+    // cp.async.bulk.global.shared::cta{.bulk_group} g, s
+    // cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes d, g, b, tm, r
+    private List<Event> parseBulkCopy(PTXQualifiers q, List<OperandContext> operands) {
+        final boolean tensor = q.takeFirst("tensor");
+        if (tensor) {
+            q.takeOne(Set.of("1d", "2d", "3d", "4d", "5d"));
+            q.take("tile");
+        }
+        final boolean toShared = q.takeFirst("shared::cluster") || q.takeFirst("shared::cta");
+        final String dstSpace = toShared ? "shared::cluster" : "global";
+        if (!toShared && !q.takeFirst("global")) {
+            throw q.error("Expected a destination state space");
+        }
+        if (!q.takeFirst(toShared ? "global" : "shared::cta")) {
+            throw q.error("Unsupported source state space");
+        }
+        q.takeAll(PTXQualifiers.HINTS);
+        if (!toShared) {
+            q.take("bulk_group");
+            q.checkConsumed();
+            if (tensor || operands.size() < 2 || operands.size() > 3) {
+                throw q.error("Expected cp.async.bulk.global.shared::cta.bulk_group g, s{, size}");
+            }
+            final Slot dst = parseSingleSlot(q, operands.get(0), "global", true);
+            final Slot src = parseSingleSlot(q, operands.get(1), "shared::cta", false);
+            return newAsyncCopy(src, List.of(dst), Tag.PTX.ASYNC, List.of(groupTag(q, "BAG")));
+        }
+        if (!q.take("mbarrier::complete_tx::bytes")) {
+            throw q.error("Missing completion mechanism .mbarrier::complete_tx::bytes");
+        }
+        final boolean multicast = q.take("multicast::cluster");
+        q.checkConsumed();
+        if (operands.size() != (tensor ? 5 : 3)) {
+            throw q.error("Unexpected operands");
+        }
+        final List<OperandContext> dstOperands = multicastOperands(q, operands.get(0), multicast);
+        final List<OperandContext> barrierOperands = multicastOperands(q, operands.get(2), multicast);
+        if (dstOperands.size() != barrierOperands.size()) {
+            throw q.error("Expected one mbarrier per destination");
+        }
+        final List<Event> events = new ArrayList<>();
+        if (tensor) {
+            // The copy reads the tensor map through the tensormap proxy; the register gets the value it read.
+            final Slot map = parseSingleSlot(q, operands.get(3), null, false);
+            final Register value = parseTargetRegisters(q, operands.get(4), 1).get(0);
+            final Event read = EventFactory.PTX.newLoad(value, map.address(), Tag.PTX.WEAK);
+            read.addTags(Tag.PTX.TMAP, Tag.PTX.AOP);
+            map.addFootprint(read);
+            events.add(read);
+        }
+        final Slot src = parseSingleSlot(q, operands.get(1), "global", false);
+        final List<Slot> dsts = new ArrayList<>();
+        for (OperandContext dst : dstOperands) {
+            dsts.add(parseSingleSlot(q, dst, dstSpace, true));
+        }
+        events.addAll(newAsyncCopy(src, dsts, Tag.PTX.ASYNC, List.of()));
+        final List<Event> checks = new ArrayList<>();
+        for (int i = 0; i < dstOperands.size(); i++) {
+            final List<Event> completeTx = newCompleteTx(q, dstOperands.get(i), barrierOperands.get(i));
+            events.add(completeTx.get(0));
+            checks.addAll(completeTx.subList(1, completeTx.size()));
+        }
+        events.addAll(checks);
+        return events;
+    }
+
+    // cp.reduce.async.bulk.global.shared::cta.bulk_group.op.type g, s: reads s and performs a relaxed .gpu reduction
+    // on g, both in the async proxy (19394-19398)
+    private List<Event> parseBulkReduction(PTXQualifiers q, List<OperandContext> operands) {
+        if (!q.takeFirst("global") || !q.takeFirst("shared::cta")) {
+            throw q.error("Expected cp.reduce.async.bulk.global.shared::cta");
+        }
+        q.take("bulk_group");
+        final String op = q.takeOne(RMW_OPS);
+        final String type = q.takeOne(PTXQualifiers.TYPES);
+        q.takeAll(PTXQualifiers.HINTS);
+        q.checkConsumed();
+        if (op == null || op.equals("cas") || op.equals("exch") || operands.size() < 2 || operands.size() > 3) {
+            throw q.error("Expected a reduction operation, the destination and the source");
+        }
+        final String group = groupTag(q, "BAG");
+        final Slot dst = parseSingleSlot(q, operands.get(0), "global", true);
+        final Slot src = parseSingleSlot(q, operands.get(1), "shared::cta", false);
+        final Register value = newAsyncRegister();
+        final Event read = EventFactory.PTX.newLoad(value, src.address(), Tag.PTX.WEAK);
+        read.addTags(Tag.PTX.ASYNC, Tag.PTX.AOP, group);
+        src.addFootprint(read);
+        final PTXRedOp red = (PTXRedOp) EventFactory.PTX.newRedOp(dst.address(), value, parseOperator(op, type),
+                Tag.PTX.RLX, Tag.PTX.GPU);
+        red.setWrappingOp(parseWrappingOp(op));
+        red.addTags(Tag.PTX.ASYNC, Tag.PTX.AOP, group);
+        dst.addFootprint(red);
+        return List.of(read, red);
+    }
+
+    // st.async{.weak}{.cluster}{.shared::cluster}{.mbarrier::complete_tx::bytes}.type d, v, b: a weak store into the
+    // shared memory of another CTA, completed by a release complete-tx at .cluster scope on b.
+    // st.async.release.{gpu,sys}.global.type f, v (sm_100): a release store (M45).
+    private List<Event> parseAsyncStore(PTXQualifiers q, List<OperandContext> operands) {
+        if (q.take("release")) {
+            final String scope = defaultIfNull(q.takeOne(Set.of("gpu", "sys")), "sys");
+            q.take("global");
+            q.takeOne(PTXQualifiers.TYPES);
+            q.checkConsumed();
+            checkOperandCount(q, operands, 2);
+            final Slot dst = parseSingleSlot(q, operands.get(0), "global", true);
+            final Event store = EventFactory.PTX.newStore(dst.address(), parseSingleValue(q, operands.get(1)),
+                    Tag.PTX.REL);
+            store.addTags(Tag.PTX.GEN, parseScope(scope));
+            dst.addFootprint(store);
+            return List.of(store);
+        }
+        q.take("weak");
+        q.take("cluster");
+        q.take("shared::cluster");
+        q.take("mbarrier::complete_tx::bytes");
+        q.takeOne(PTXQualifiers.TYPES);
+        q.checkConsumed();
+        checkOperandCount(q, operands, 3);
+        final Slot dst = parseSingleSlot(q, operands.get(0), "shared::cluster", true);
+        final Event store = EventFactory.PTX.newStore(dst.address(), parseSingleValue(q, operands.get(1)),
+                Tag.PTX.WEAK);
+        store.addTags(Tag.PTX.GEN, Tag.PTX.AOP);
+        dst.addFootprint(store);
+        final List<Event> events = new ArrayList<>(List.of(store));
+        events.addAll(newCompleteTx(q, operands.get(0), operands.get(2)));
+        return events;
+    }
+
+    // red.async.relaxed.cluster{.shared::cluster}.mbarrier::complete_tx::bytes.op.type d, v, b: a relaxed .cluster
+    // reduction on the shared memory of another CTA, completed by a release complete-tx at .cluster scope on b
+    private List<Event> parseAsyncReduction(PTXQualifiers q, List<OperandContext> operands) {
+        q.take("relaxed");
+        q.take("cluster");
+        q.take("shared::cluster");
+        q.take("mbarrier::complete_tx::bytes");
+        final String op = q.takeOne(RMW_OPS);
+        final String type = q.takeOne(PTXQualifiers.TYPES);
+        q.checkConsumed();
+        checkOperandCount(q, operands, 3);
+        if (op == null || op.equals("cas") || op.equals("exch")) {
+            throw q.error("Missing or unsupported reduction operation");
+        }
+        final Slot dst = parseSingleSlot(q, operands.get(0), "shared::cluster", true);
+        final PTXRedOp red = (PTXRedOp) EventFactory.PTX.newRedOp(dst.address(), parseSingleValue(q, operands.get(1)),
+                parseOperator(op, type), Tag.PTX.RLX, Tag.PTX.CLUSTER);
+        red.setWrappingOp(parseWrappingOp(op));
+        red.addTags(Tag.PTX.GEN, Tag.PTX.AOP);
+        dst.addFootprint(red);
+        final List<Event> events = new ArrayList<>(List.of(red));
+        events.addAll(newCompleteTx(q, operands.get(0), operands.get(2)));
+        return events;
+    }
+
+    // A weak copy: one read of the source, one write per destination, all asynchronous
+    private List<Event> newAsyncCopy(Slot src, List<Slot> dsts, String proxy, List<String> tags) {
+        final Register value = newAsyncRegister();
+        final List<Event> events = new ArrayList<>();
+        final Event read = EventFactory.PTX.newLoad(value, src.address(), Tag.PTX.WEAK);
+        read.addTags(proxy, Tag.PTX.AOP);
+        read.addTags(tags);
+        src.addFootprint(read);
+        events.add(read);
+        for (Slot dst : dsts) {
+            final Event write = EventFactory.PTX.newStore(dst.address(), value, Tag.PTX.WEAK);
+            write.addTags(proxy, Tag.PTX.AOP);
+            write.addTags(tags);
+            dst.addFootprint(write);
+            events.add(write);
+        }
+        return events;
+    }
+
+    // The complete-tx of an asynchronous operation on the mbarrier b, which must be in the CTA of the destination d:
+    // one transaction per written location, .release at .cluster scope (19150-19152, 17241-17244)
+    private List<Event> newCompleteTx(PTXQualifiers q, OperandContext destination, OperandContext barrier) {
+        final Slot slot = parseMbarrierSlot(q, barrier, "shared::cluster", false);
+        final String dst = destination.location().getText();
+        if (spaces.isShared(dst) && spaces.getOwner(dst) != spaces.getOwner(barrier.getText())) {
+            throw q.error("The mbarrier must be in the CTA of the destination");
+        }
+        final Register old = newMbarrierStateRegister();
+        final PTXMbarrierOp completeTx = new PTXMbarrierOp(old, slot.address(),
+                PTXMbarrierOp.Kind.COMPLETE_TX, expressions.makeZero(archType), expressions.makeOne(archType),
+                Tag.PTX.REL);
+        completeTx.addTags(Tag.PTX.GEN, Tag.PTX.CLUSTER, Tag.PTX.AOP, Tag.PTX.COMPLETION);
+        slot.addFootprint(completeTx);
+        final List<Event> events = new ArrayList<>(List.of(completeTx));
+        events.addAll(newValidityCheck(old));
+        return events;
+    }
+
+    private List<OperandContext> multicastOperands(PTXQualifiers q, OperandContext operand, boolean multicast) {
+        if (operand.multicastTargets() == null) {
+            return List.of(operand);
+        }
+        if (!multicast) {
+            throw q.error("Several destinations need .multicast::cluster");
+        }
+        final List<OperandContext> result = new ArrayList<>();
+        for (LocationContext location : operand.multicastTargets().location()) {
+            result.add(newLocationOperand(operand, location));
+        }
+        return result;
+    }
+
+    // An operand naming only the given location (for the parts of d0+d1)
+    private static OperandContext newLocationOperand(OperandContext parent, LocationContext location) {
+        final OperandContext operand = new OperandContext((ParserRuleContext) parent.getParent(), parent.invokingState);
+        operand.addChild(location);
+        return operand;
+    }
+
+    private Register newAsyncRegister() {
+        return programBuilder.getOrNewRegister(mainThread, "__async" + asyncCount++, archType);
+    }
+
+    // The tag of the async-group that the next operation of this kind joins
+    private String groupTag(PTXQualifiers q, String kind) {
+        final int group = committedGroups.computeIfAbsent(mainThread, t -> new HashMap<>()).getOrDefault(kind, 0);
+        if (group >= Tag.PTX.ASYNC_GROUPS) {
+            throw q.error("Too many async-groups");
+        }
+        return Tag.PTX.asyncGroup(kind, group);
+    }
+
+    private void commitGroup(String kind) {
+        committedGroups.computeIfAbsent(mainThread, t -> new HashMap<>()).merge(kind, 1, Integer::sum);
+    }
+
+    // A wait for all but the most recent `pending` committed async-groups of the kind (only their reads if readOnly)
+    private Event newAsyncWait(String kind, int pending, boolean readOnly) {
+        final int committed = committedGroups.computeIfAbsent(mainThread, t -> new HashMap<>()).getOrDefault(kind, 0);
+        final Event wait = new GenericVisibleEvent("async_wait", Tag.PTX.COMPLETION);
+        for (int k = 0; k < committed - pending; k++) {
+            wait.addTags((readOnly ? "WAITR_" : "WAIT_") + Tag.PTX.asyncGroup(kind, k));
+        }
+        return wait;
+    }
+
+    private static int parseCount(PTXQualifiers q, List<OperandContext> operands) {
+        checkOperandCount(q, operands, 1);
+        if (operands.get(0).constant().size() != 1) {
+            throw q.error("The number of pending groups must be a constant");
+        }
+        return Integer.parseInt(operands.get(0).getText());
     }
 
     // ----------------------------------------------------------------------------------------------------------------
@@ -1081,18 +1442,24 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         return append(events, ctx, events.stream().filter(e -> e.hasTag(Tag.MEMORY)).count() > 1);
     }
 
+    // The instruction boundary ends after the last memory event; local computations and control flow that follow
+    // (e.g. the validity check of an mbarrier operation) stay outside it.
     private Object append(List<Event> events, ParserRuleContext ctx, boolean group) {
         final int line = ctx.getStart().getLine();
+        int last = events.size() - 1;
+        while (group && last > 0 && !events.get(last).hasTag(Tag.MEMORY)) {
+            last--;
+        }
         InstructionBoundary begin = null;
         if (group) {
             begin = EventFactory.newInstructionBegin();
             programBuilder.addChild(mainThread, begin, line);
         }
-        for (Event event : events) {
-            programBuilder.addChild(mainThread, event, line);
-        }
-        if (group) {
-            programBuilder.addChild(mainThread, EventFactory.newInstructionEnd(begin), line);
+        for (int i = 0; i < events.size(); i++) {
+            programBuilder.addChild(mainThread, events.get(i), line);
+            if (group && i == last) {
+                programBuilder.addChild(mainThread, EventFactory.newInstructionEnd(begin), line);
+            }
         }
         return null;
     }
