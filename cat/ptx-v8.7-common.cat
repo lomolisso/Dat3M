@@ -155,9 +155,15 @@ let proxy-fence-ops = ([F & ~TMAP_FENCE & ~ASYNC_FROM_GEN]; (same-proxy & scta);
 let async-from-generic-ops = ([F & ASYNC_FROM_GEN]; scta; [M & ASYNC]) & fence-space
 // The last hop of a path may reach an asynchronous operation through its issue order
 let cbi = cause-base | (cause-base?; issue)
+// "by the same thread block" (7001): a write that an asynchronous operation makes into shared memory is performed
+// by the CTA that owns the location (19133-19135, M56); every other operation by the CTA of its thread
+let async-shared-write = AOP & ASYNC & W & SHARED
+let same-block = (scta \ ((async-shared-write * _) | (_ * async-shared-write)))
+               | ([async-shared-write]; vloc; [async-shared-write | SHARED_CTA])
+               | ([SHARED_CTA]; vloc; [async-shared-write])
 let proxy-preserved-cause-base
                 = ([GEN]; (vloc & cbi); [GEN])
-                | ([M]; (same-proxy & scta & vloc & cbi); [M])
+                | ([M]; (same-proxy & same-block & vloc & cbi); [M])
                 | vloc & (cause-base & (proxy-fence-ops^-1); cbi; [GEN])
                 | vloc & ([GEN]; cause-base; cbi & proxy-fence-ops)
                 | vloc & (cause-base & (proxy-fence-ops^-1); cause-base; cbi & proxy-fence-ops)
@@ -172,6 +178,9 @@ let proxy-preserved-cause-base
                 // the completion of an asynchronous operation is followed by an implicit generic-async proxy fence
                 // (18763-18765, M41)
                 | vloc & ([M & ASYNC]; cause-base; [COMPLETION]; cbi; [GEN])
+                // a generic read is ordered before a later async write without a proxy fence (write-after-read,
+                // 22306-22307, M57)
+                | vloc & ([GEN & R]; cbi; [ASYNC & W])
 
 (* 8.9.5 Causality order *)
 let cause = proxy-preserved-cause-base | (observation; proxy-preserved-cause-base)
