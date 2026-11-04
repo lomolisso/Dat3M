@@ -460,6 +460,7 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   `bar.sync`, `bar.arrive`, `barrier.sync{.aligned}`, `barrier.arrive{.aligned}` and `barrier.cta.*` have PTX's
   meaning (M29). Tests should use the PTX forms.
 - **Tests.** `Barrier/*`, `Manual/*` with `bar.cta.*` (upstream meaning); `Kamui/kamui/ptx87/bar/*` (PTX meaning).
+  The fence at the wait of a sync (M29) applies to both forms.
 
 ### M29. Barrier instances and thread counts
 
@@ -477,8 +478,21 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   instance must arrive; with a count, the instance completes when that many threads arrived (Dartagnan's named
   barriers), and a thread blocks at an instance that never completes. Synchronization (6927-6928): an arrive or
   sync synchronizes with every sync of the same instance; an arrive is never the target.
+- **Decided.** The wait of a CTA barrier acts as a `fence.acq_rel.cta` of its thread, placed after
+  the thread's own arrival: `bar.sync`, `barrier.sync` and the dialect's `bar.cta.sync` are an arrive followed by a
+  wait, and the fence is at the wait; `bar.arrive` and `barrier.arrive` have no fence. 22300-22304: the barrier
+  "guarantees that when the barrier completes, prior memory accesses requested by this thread are performed relative
+  to all threads participating in the barrier. The barrier{.cta}.sync and barrier{.cta}.red instruction further
+  guarantees that no new memory access is requested by this thread before the barrier completes." In the model each
+  sync is followed in program order by a fence event (`ACQ_REL`, `.cta`, generic proxy). So `bar.sync; st.relaxed f`
+  is a release pattern (6840-6842) and `ld.relaxed f; bar.sync` an acquire pattern, but an acquire pattern that ends
+  at the fence does not reach what the thread's own arrival synchronizes with, since the arrival precedes the fence.
+  `bar.red` is not in the dialect; `bar.warp.sync` (M30) and `barrier.cluster` (M31) are unchanged. Before this
+  decision a barrier had no fence; no upstream test changes verdict.
 - **Tests.** `Kamui/kamui/ptx87/bar/*` (`bar.sync-count+hang`: forbidden, the waiting thread never loads),
-  `Kamui/kamui/ptx87/sizes/mixed-size+bar.sync`.
+  `Kamui/kamui/ptx87/sizes/mixed-size+bar.sync`; `Kamui/kamui/features/bar/WRC+{bar,barrier}.sync+*`
+  (`relaxed-acquire` and `release-acquire` forbidden, `relaxed-relaxed` and `reader-side` allowed; `relaxed-acquire`
+  was allowed before the decision), `features/bar/MP+bar.sync.2gen` (forbidden).
 
 ### M30. `bar.warp.sync`
 
@@ -599,9 +613,17 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   for only in executions that satisfy the axioms, so a stale read cannot justify itself.
 - **Cross-check.** Decided reading: any outcome when an execution that satisfies the axioms has the misuse, shared
   decision D7 in kamui-isa's `models/ptx87/decisions.md`.
+- **Decided.** An arrive-on that would take the pending arrival count below zero is undefined
+  behaviour, flagged in the same way. 23989-23993: the valid range of the pending arrival count is 0 to 2^20 - 1.
+  24094-24096: an arrive-on "Signals the arrival of the executing thread ... As a result of this, the pending
+  arrival count is decremented by count." As for M55, a requirement with no stated consequence is read as undefined
+  behaviour when it is broken. In the model, every arrive-on (`mbarrier.arrive{_drop}`, its `.expect_tx` form and
+  `cp.async.mbarrier.arrive.noinc`) is followed by a check of the state it read: if its count exceeds the pending
+  count, an undefined-behaviour event is executed.
 - **Tests.** `Kamui/kamui/ptx87/mbarrier-init/mbarrier-init+same-thread` (forbidden, not flagged),
   `mbarrier-init+inval+use` and `mbarrier-init+no-fence+cluster-barrier` (`program_spec` forbidden, flagged:
-  allowed).
+  allowed); `Kamui/kamui/features/mbarrier/arrive-beyond-pending` (`program_spec` forbidden, flagged: allowed),
+  `features/mbarrier/inval+wait` (flagged: allowed).
 
 ### M36. Restricted fences
 
@@ -926,8 +948,44 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   executing CTA (a): "has to be" states a requirement the program breaks, and the neighbouring sentence makes such a
   breach undefined. It is visible in the program text, so it is flagged like M51 (`undefined-behaviour`), and the copy
   is still modelled. (c) would leave tests undecided.
+- **Decided.** Reading (a) stays: 19067-19068 is a requirement on the program, worded like
+  19064-19065.
 - **Tests.** `Kamui/kamui/features/async/DSMEM-copy+fence` (forbidden), `DSMEM-copy+no-fence`, `DSMEM-copy-war+*`
   (allowed), `self-copy*` (flagged: allowed; `self-copy+fence+wait` is forbidden by `program_spec`).
+
+### M56. The thread block that performs an asynchronous write into shared memory
+
+- **Question.** Proxy-preserved base causality orders two operations of the same non-generic proxy only if they are
+  performed "by the same thread block" (7000-7002). Which thread block performs the write that an asynchronous
+  operation makes into the shared memory of another CTA, such as a multicast copy?
+- **Manual.** 7000-7002: "X and Y are performed to the same address, using the same proxy, and by the same thread
+  block". 19133-19135: "The source data is multicast to the same CTA-relative offset as dstMem in the shared memory
+  of each destination CTA. The mbarrier signal is also multicast to the same CTA-relative offset as mbar in the
+  shared memory of the destination CTA."
+- **Alternatives.** (a) the CTA that owns the shared memory written; (b) the CTA of the issuing thread; (c) no
+  thread-block condition for the async proxy.
+- **Choice.** (a), as decided. It treats the data like M42 treats the multicast complete-tx. Writes to
+  global memory, and every other operation, stay with the CTA of the issuing thread. (b) was the model's earlier
+  reading; (c) contradicts 7001 and would also change upstream proxy tests (`Kamui/mixedproxy/MP_gpu+03`,
+  `Nvidia/proxy/Proxy-MP-gpu4`) if applied to all proxies.
+- **Tests.** `Kamui/kamui/idioms/tma-multicast-war+remote-arrive.cluster` (forbidden; allowed under (b)).
+
+### M57. Write-after-read from the generic proxy to the async proxy
+
+- **Question.** A generic read precedes, in base causality, an async-proxy write to the same location (for example a
+  consumer reads shared memory, arrives on an mbarrier, and the producer then issues a bulk copy into it). Without a
+  proxy fence, can the read return the value of the later write?
+- **Manual.** 6779: "A proxy fence is required to synchronize memory operations across different proxies."
+  18759-18761. 22306-22307: "A memory read (e.g., by ld or atom) has been performed when the value read has been
+  transmitted from memory".
+- **Alternatives.** (a) the pair is ordered without a proxy fence; (b) it needs `fence.proxy.async` like any other
+  cross-proxy pair.
+- **Choice.** (a), as decided: when the read precedes the release that lets the write be issued, the
+  read has been performed, so it cannot return the later value. In the model one more case of proxy-preserved base
+  causality: a generic read and an async write to the same address, related by base causality whose last step may
+  be issue order (M39). Writes and the other direction (async to generic) still need a proxy fence or the implicit
+  fence at completion (M41). (b) was the model's earlier reading.
+- **Tests.** `Kamui/kamui/idioms/rs-mainloop-war+ldmatrix` (forbidden; allowed under (b)).
 
 ## Tests Dartagnan cannot decide
 
