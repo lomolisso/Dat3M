@@ -1,0 +1,11 @@
+PTX MP+bar.sync.2gen
+{
+x=0;
+P1:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 0,cluster 0,gpu 0 ;
+ bar.sync 0, 2            | bar.sync 0, 2            ;
+ st.weak x, 1             | bar.sync 0, 2            ;
+ bar.sync 0, 2            | ld.weak r0, x            ;
+exists
+(P1:r0 == 0)
