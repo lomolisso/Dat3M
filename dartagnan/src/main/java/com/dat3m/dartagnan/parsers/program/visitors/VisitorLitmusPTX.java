@@ -66,6 +66,9 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     private static final Set<String> LOAD_SEMS = Set.of("weak", "relaxed", "acquire", "volatile", "mmio");
     private static final Set<String> STORE_SEMS = Set.of("weak", "relaxed", "release", "volatile", "mmio");
     private static final Set<String> RMW_SEMS = Set.of("relaxed", "acquire", "release", "acq_rel");
+    // Load modes of tensor copies (19534-19560): they only change how coordinates map to addresses (M54)
+    private static final Set<String> TENSOR_MODES = Set.of("tile", "tile::gather4", "tile::scatter4", "im2col",
+            "im2col::w", "im2col::w::128", "im2col_no_offs");
     private static final Set<String> FENCE_SEMS = Set.of("sc", "acq_rel", "acquire", "release");
     private static final Set<String> SPACES = PTXStateSpaces.QUALIFIERS;
     private static final Set<String> RMW_OPS = Set.of(
@@ -433,59 +436,95 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     // ----------------------------------------------------------------------------------------------------------------
     // Atomic operations
 
+    // atom{.sem}{.scope}{.space}{.vN}.op{.noftz}.type d, a, b{, c}: one atomic operation. With .vN (.global only),
+    // N registers, N locations and N values, one atomic operation per element (22878-22880, M53). Floating-point
+    // operations compute on the litmus values (M52).
     private List<Event> parseAtom(PTXQualifiers q, List<OperandContext> operands) {
         final String proxy = q.getName().equals("suatom") ? Tag.PTX.SUR : Tag.PTX.GEN;
         final String mo = parseMo(defaultIfNull(q.takeOne(RMW_SEMS), "relaxed"));
         final String scope = parseScope(defaultIfNull(q.takeOne(PTXQualifiers.SCOPES), "gpu"));
         final String space = q.takeOne(SPACES);
-        final String op = q.takeOne(RMW_OPS);
-        if (op == null) {
-            throw q.error("Missing operation");
-        }
+        final String op = parseRmwOperation(q, false);
+        final int width = parseVectorWidth(q);
         q.takeAll(PTXQualifiers.HINTS);
         final String type = q.takeOne(PTXQualifiers.TYPES);
         q.checkConsumed();
-        checkOperandCount(q, operands, op.equals("cas") ? 4 : 3);
-        final Register result = parseTargetRegisters(q, operands.get(0), 1).get(0);
-        final Slot slot = parseSingleSlot(q, operands.get(1), space, true);
-        final Expression value = parseSingleValue(q, operands.get(2));
-        final Event atom = switch (op) {
-            case "cas" -> EventFactory.PTX.newAtomCAS(slot.address(), result, value,
-                    parseSingleValue(q, operands.get(3)), mo, scope);
-            case "exch" -> EventFactory.PTX.newAtomExch(slot.address(), result, value, mo, scope);
-            default -> {
-                PTXAtomOp atomOp = (PTXAtomOp) EventFactory.PTX.newAtomOp(slot.address(), result, value,
-                        parseOperator(op, type), mo, scope);
-                atomOp.setWrappingOp(parseWrappingOp(op));
-                yield atomOp;
-            }
-        };
-        atom.addTags(proxy);
-        slot.addFootprint(atom);
-        return List.of(atom);
+        checkVectorRmw(q, width, op, space);
+        final int values = op.equals("cas") ? 2 : 1;
+        checkOperandCount(q, operands, (2 + values) * width);
+        final List<Event> events = new ArrayList<>();
+        for (int i = 0; i < width; i++) {
+            final Register result = parseTargetRegisters(q, operands.get(i), 1).get(0);
+            final Slot slot = parseSingleSlot(q, operands.get(width + i), space, true);
+            final Expression value = parseSingleValue(q, operands.get(2 * width + i));
+            final Event atom = switch (op) {
+                case "cas" -> EventFactory.PTX.newAtomCAS(slot.address(), result, value,
+                        parseSingleValue(q, operands.get(3 * width + i)), mo, scope);
+                case "exch" -> EventFactory.PTX.newAtomExch(slot.address(), result, value, mo, scope);
+                default -> {
+                    PTXAtomOp atomOp = (PTXAtomOp) EventFactory.PTX.newAtomOp(slot.address(), result, value,
+                            parseOperator(op, type), mo, scope);
+                    atomOp.setWrappingOp(parseWrappingOp(op));
+                    yield atomOp;
+                }
+            };
+            atom.addTags(proxy);
+            slot.addFootprint(atom);
+            events.add(atom);
+        }
+        return events;
     }
 
+    // red{.sem}{.scope}{.space}{.vN}.op{.noftz}.type a, b: as atom, without a result
     private List<Event> parseRed(PTXQualifiers q, List<OperandContext> operands) {
         final String proxy = q.getName().equals("sured") ? Tag.PTX.SUR : Tag.PTX.GEN;
         final String mo = parseMo(defaultIfNull(q.takeOne(RMW_SEMS), "relaxed"));
         final String scope = parseScope(defaultIfNull(q.takeOne(PTXQualifiers.SCOPES), "gpu"));
         final String space = q.takeOne(SPACES);
-        final String op = q.takeOne(RMW_OPS);
-        if (op == null || op.equals("cas") || op.equals("exch")) {
-            throw q.error("Missing or unsupported reduction operation");
-        }
+        final String op = parseRmwOperation(q, true);
+        final int width = parseVectorWidth(q);
         q.takeAll(PTXQualifiers.HINTS);
         final String type = q.takeOne(PTXQualifiers.TYPES);
         q.checkConsumed();
-        checkOperandCount(q, operands, 2);
-        final Slot slot = parseSingleSlot(q, operands.get(0), space, true);
-        final Expression value = parseSingleValue(q, operands.get(1));
-        final PTXRedOp red = (PTXRedOp) EventFactory.PTX.newRedOp(slot.address(), value, parseOperator(op, type),
-                mo, scope);
-        red.setWrappingOp(parseWrappingOp(op));
-        red.addTags(proxy);
-        slot.addFootprint(red);
-        return List.of(red);
+        checkVectorRmw(q, width, op, space);
+        checkOperandCount(q, operands, 2 * width);
+        final List<Event> events = new ArrayList<>();
+        for (int i = 0; i < width; i++) {
+            final Slot slot = parseSingleSlot(q, operands.get(i), space, true);
+            final Expression value = parseSingleValue(q, operands.get(width + i));
+            final PTXRedOp red = (PTXRedOp) EventFactory.PTX.newRedOp(slot.address(), value,
+                    parseOperator(op, type), mo, scope);
+            red.setWrappingOp(parseWrappingOp(op));
+            red.addTags(proxy);
+            slot.addFootprint(red);
+            events.add(red);
+        }
+        return events;
+    }
+
+    // The operation of atom or red; .noftz (required by the half-precision additions, 22902-22903) only with add
+    private static String parseRmwOperation(PTXQualifiers q, boolean reduction) {
+        final String op = q.takeOne(RMW_OPS);
+        if (op == null || (reduction && (op.equals("cas") || op.equals("exch")))) {
+            throw q.error("Missing or unsupported operation");
+        }
+        if (q.take("noftz") && !op.equals("add") && !op.equals("min") && !op.equals("max")) {
+            throw q.error(".noftz needs a floating-point add, min or max");
+        }
+        return op;
+    }
+
+    // Vector atomic operations: .global only (22815-22817), arithmetic operations only (22831-22870)
+    private static void checkVectorRmw(PTXQualifiers q, int width, String op, String space) {
+        if (width == 1) {
+            return;
+        }
+        if (space != null && !space.equals("global")) {
+            throw q.error("Vector atomic operations need .global");
+        }
+        if (!Set.of("add", "min", "max").contains(op)) {
+            throw q.error("Unsupported vector atomic operation ." + op);
+        }
     }
 
     // inc and dec use ADD and SUB as their nominal operator, the event computes the wrapping operation.
@@ -695,12 +734,13 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         if (operands.get(0).constant().size() != 1) {
             throw q.error("The member mask must be a constant");
         }
-        final long mask = Long.decode(operands.get(0).getText());
+        // Bits of threads the test does not have stand for lanes without a litmus thread: -1 names every thread (M30)
+        final long mask = Long.decode(operands.get(0).getText()) & ((1L << threadCount) - 1);
         if ((mask & (1L << mainThread)) == 0) {
             throw q.error("Thread P" + mainThread + " is not in the member mask");
         }
         for (int k = 0; k < 64; k++) {
-            if ((mask & (1L << k)) != 0 && (k >= threadCount || spaces.getCta(k) != spaces.getCta(mainThread))) {
+            if ((mask & (1L << k)) != 0 && spaces.getCta(k) != spaces.getCta(mainThread)) {
                 throw q.error("The member mask names P" + k + ", which is not a thread of the CTA of P" + mainThread);
             }
         }
@@ -880,9 +920,14 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     private List<Event> parseCacheControl(PTXQualifiers q, List<OperandContext> operands) {
         switch (q.getName()) {
             case "prefetch" -> {
-                q.takeOne(Set.of("global", "local"));
-                if (q.takeOne(Set.of("L1", "L2", "L2::evict_last", "L2::evict_normal")) == null) {
-                    throw q.error("Missing level");
+                if (q.take("tensormap")) {
+                    // prefetch{.const,.param}.tensormap: for a later tensor copy (17583-17585)
+                    q.takeOne(Set.of("const", "param"));
+                } else {
+                    q.takeOne(Set.of("global", "local"));
+                    if (q.takeOne(Set.of("L1", "L2", "L2::evict_last", "L2::evict_normal")) == null) {
+                        throw q.error("Missing level");
+                    }
                 }
             }
             case "prefetchu" -> {
@@ -932,7 +977,10 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         }
         if (q.takeFirst("bulk")) {
             if (q.takeFirst("prefetch")) {
-                // cp.async.bulk.prefetch is a hint to prefetch data into the L2 cache
+                // cp.async.bulk.prefetch{.tensor.Nd} is a hint to prefetch data into the L2 cache
+                if (parseTensorShape(q)) {
+                    q.takeOne(TENSOR_MODES);
+                }
                 q.take("L2");
                 q.takeOne(SPACES);
                 q.take("L2::cache_hint");
@@ -1016,38 +1064,56 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
     }
 
     // cp.async.bulk.{shared::cluster,shared::cta}.global.mbarrier::complete_tx::bytes{.multicast::cluster} d, g, b
+    // cp.async.bulk.shared::cluster.shared::cta.mbarrier::complete_tx::bytes d, s, b (M55)
     // cp.async.bulk.global.shared::cta{.bulk_group} g, s
-    // cp.async.bulk.tensor.1d.shared::cluster.global.tile.mbarrier::complete_tx::bytes d, g, b, tm, r
+    // cp.async.bulk.tensor.Nd.shared::cluster.global.mode.mbarrier::complete_tx::bytes d, g, b, tm, r
+    // cp.async.bulk.tensor.Nd.global.shared::cta.mode.bulk_group g, s, tm, r (M54)
     private List<Event> parseBulkCopy(PTXQualifiers q, List<OperandContext> operands) {
-        final boolean tensor = q.takeFirst("tensor");
-        if (tensor) {
-            q.takeOne(Set.of("1d", "2d", "3d", "4d", "5d"));
-            q.take("tile");
-        }
-        final boolean toShared = q.takeFirst("shared::cluster") || q.takeFirst("shared::cta");
-        final String dstSpace = toShared ? "shared::cluster" : "global";
-        if (!toShared && !q.takeFirst("global")) {
+        final boolean tensor = parseTensorShape(q);
+        final String dstSpace = q.takeFirst("shared::cluster") ? "shared::cluster"
+                : q.takeFirst("shared::cta") ? "shared::cta"
+                : q.takeFirst("global") ? "global" : null;
+        if (dstSpace == null) {
             throw q.error("Expected a destination state space");
         }
-        if (!q.takeFirst(toShared ? "global" : "shared::cta")) {
+        final String srcSpace = q.takeFirst("global") ? "global" : q.takeFirst("shared::cta") ? "shared::cta" : null;
+        if (srcSpace == null || srcSpace.equals(dstSpace)
+                || (dstSpace.equals("global") && !srcSpace.equals("shared::cta"))
+                || (dstSpace.equals("shared::cta") && !srcSpace.equals("global"))) {
             throw q.error("Unsupported source state space");
         }
+        if (tensor) {
+            q.takeOne(TENSOR_MODES);
+        }
         q.takeAll(PTXQualifiers.HINTS);
-        if (!toShared) {
+        if (dstSpace.equals("global")) {
             q.take("bulk_group");
             q.checkConsumed();
-            if (tensor || operands.size() < 2 || operands.size() > 3) {
-                throw q.error("Expected cp.async.bulk.global.shared::cta.bulk_group g, s{, size}");
+            if (tensor ? operands.size() != 4 : operands.size() < 2 || operands.size() > 3) {
+                throw q.error(tensor ? "Expected cp.async.bulk.tensor.Nd.global.shared::cta g, s, tm, r"
+                        : "Expected cp.async.bulk.global.shared::cta.bulk_group g, s{, size}");
+            }
+            final String group = groupTag(q, "BAG");
+            final List<Event> events = new ArrayList<>();
+            if (tensor) {
+                final Event map = newTensorMapRead(q, operands.get(2), operands.get(3));
+                map.addTags(group);
+                events.add(map);
             }
             final Slot dst = parseSingleSlot(q, operands.get(0), "global", true);
             final Slot src = parseSingleSlot(q, operands.get(1), "shared::cta", false);
-            return newAsyncCopy(src, List.of(dst), Tag.PTX.ASYNC, List.of(groupTag(q, "BAG")));
+            events.addAll(newAsyncCopy(src, List.of(dst), Tag.PTX.ASYNC, List.of(group)));
+            return events;
         }
         if (!q.take("mbarrier::complete_tx::bytes")) {
             throw q.error("Missing completion mechanism .mbarrier::complete_tx::bytes");
         }
-        final boolean multicast = q.take("multicast::cluster");
+        final boolean fromShared = srcSpace.equals("shared::cta");
+        final boolean multicast = !fromShared && q.take("multicast::cluster");
         q.checkConsumed();
+        if (fromShared && (tensor || !dstSpace.equals("shared::cluster"))) {
+            throw q.error("Expected cp.async.bulk.shared::cluster.shared::cta d, s, b");
+        }
         if (operands.size() != (tensor ? 5 : 3)) {
             throw q.error("Unexpected operands");
         }
@@ -1058,18 +1124,12 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         }
         final List<Event> events = new ArrayList<>();
         if (tensor) {
-            // The copy reads the tensor map through the tensormap proxy; the register gets the value it read.
-            final Slot map = parseSingleSlot(q, operands.get(3), null, false);
-            final Register value = parseTargetRegisters(q, operands.get(4), 1).get(0);
-            final Event read = EventFactory.PTX.newLoad(value, map.address(), Tag.PTX.WEAK);
-            read.addTags(Tag.PTX.TMAP, Tag.PTX.AOP);
-            map.addFootprint(read);
-            events.add(read);
+            events.add(newTensorMapRead(q, operands.get(3), operands.get(4)));
         }
-        final Slot src = parseSingleSlot(q, operands.get(1), "global", false);
+        final Slot src = parseSingleSlot(q, operands.get(1), srcSpace, false);
         final List<Slot> dsts = new ArrayList<>();
         for (OperandContext dst : dstOperands) {
-            dsts.add(parseSingleSlot(q, dst, dstSpace, true));
+            dsts.add(parseSingleSlot(q, dst, "shared::cluster", true));
         }
         events.addAll(newAsyncCopy(src, dsts, Tag.PTX.ASYNC, List.of()));
         final List<Event> checks = new ArrayList<>();
@@ -1078,25 +1138,64 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             events.add(completeTx.get(0));
             checks.addAll(completeTx.subList(1, completeTx.size()));
         }
+        if (fromShared && spaces.isInOwnCta(dstOperands.get(0).getText(), mainThread)) {
+            // The destination "has to be in the shared memory of a different CTA within the cluster" (19067-19068)
+            checks.add(new GenericVisibleEvent("undefined_behaviour", Tag.PTX.UB_STATIC));
+        }
         events.addAll(checks);
         return events;
     }
 
-    // cp.reduce.async.bulk.global.shared::cta.bulk_group.op.type g, s: reads s and performs a relaxed .gpu reduction
-    // on g, both in the async proxy (19394-19398)
+    // .tensor.Nd of a tensor copy, reduction or prefetch
+    private static boolean parseTensorShape(PTXQualifiers q) {
+        if (!q.takeFirst("tensor")) {
+            return false;
+        }
+        if (q.takeOne(Set.of("1d", "2d", "3d", "4d", "5d")) == null) {
+            throw q.error("Missing tensor dimension");
+        }
+        return true;
+    }
+
+    // A tensor copy reads its tensor map through the tensormap proxy (19591); the register gets the value it read
+    private Event newTensorMapRead(PTXQualifiers q, OperandContext tensorMap, OperandContext target) {
+        final Slot map = parseSingleSlot(q, tensorMap, null, false);
+        final Register value = parseTargetRegisters(q, target, 1).get(0);
+        final Event read = EventFactory.PTX.newLoad(value, map.address(), Tag.PTX.WEAK);
+        read.addTags(Tag.PTX.TMAP, Tag.PTX.AOP);
+        map.addFootprint(read);
+        return read;
+    }
+
+    // cp.reduce.async.bulk.global.shared::cta.bulk_group.op.type g, s and
+    // cp.reduce.async.bulk.tensor.Nd.global.shared::cta.op.mode.bulk_group g, s, tm, r (M54): reads s and performs a
+    // relaxed .gpu reduction on g, both in the async proxy (19394-19398, 19956-19959)
     private List<Event> parseBulkReduction(PTXQualifiers q, List<OperandContext> operands) {
+        final boolean tensor = parseTensorShape(q);
         if (!q.takeFirst("global") || !q.takeFirst("shared::cta")) {
             throw q.error("Expected cp.reduce.async.bulk.global.shared::cta");
+        }
+        if (tensor) {
+            q.takeOne(TENSOR_MODES);
         }
         q.take("bulk_group");
         final String op = q.takeOne(RMW_OPS);
         final String type = q.takeOne(PTXQualifiers.TYPES);
+        q.take("noftz");
         q.takeAll(PTXQualifiers.HINTS);
         q.checkConsumed();
-        if (op == null || op.equals("cas") || op.equals("exch") || operands.size() < 2 || operands.size() > 3) {
-            throw q.error("Expected a reduction operation, the destination and the source");
+        if (op == null || op.equals("cas") || op.equals("exch")
+                || (tensor ? operands.size() != 4 : operands.size() < 2 || operands.size() > 3)) {
+            throw q.error("Expected a reduction operation, the destination and the source"
+                    + (tensor ? ", the tensor map and a register" : ""));
         }
         final String group = groupTag(q, "BAG");
+        final List<Event> events = new ArrayList<>();
+        if (tensor) {
+            final Event map = newTensorMapRead(q, operands.get(2), operands.get(3));
+            map.addTags(group);
+            events.add(map);
+        }
         final Slot dst = parseSingleSlot(q, operands.get(0), "global", true);
         final Slot src = parseSingleSlot(q, operands.get(1), "shared::cta", false);
         final Register value = newAsyncRegister();
@@ -1108,7 +1207,9 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         red.setWrappingOp(parseWrappingOp(op));
         red.addTags(Tag.PTX.ASYNC, Tag.PTX.AOP, group);
         dst.addFootprint(red);
-        return List.of(read, red);
+        events.add(read);
+        events.add(red);
+        return events;
     }
 
     // st.async{.weak}{.cluster}{.shared::cluster}{.mbarrier::complete_tx::bytes}.type d, v, b: a weak store into the
@@ -1350,10 +1451,11 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         q.take("aligned");
         switch (operation) {
             case "fence" -> {
+                // Orders the earlier instructions of the thread before the next wgmma.mma_async operations (M48)
                 q.checkConsumed();
                 checkOperandCount(q, operands, 0);
                 wgmmaFenced.add(mainThread);
-                return List.of();
+                return List.of(new GenericVisibleEvent("wgmma_fence", Tag.PTX.WGMMA_FENCE));
             }
             case "commit_group" -> {
                 q.checkConsumed();
@@ -1628,8 +1730,8 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             return List.of(programBuilder.getOrNewRegister(mainThread,
                     registerName(operand.register(), operand.index()), archType));
         }
-        if (operand.location() != null) {
-            throw new ParsingException("Expected a value instead of " + operand.getText());
+        if (operand.location() != null || operand.fraction() != null) {
+            throw new ParsingException("Expected an integer value instead of " + operand.getText());
         }
         return operand.constant().stream().map(c -> (Expression) c.accept(this)).toList();
     }

@@ -306,8 +306,9 @@ public final class Tag {
         // not depend on the values read (e.g. a missing wgmma.fence)
         public static final String UB = "UB";
         public static final String UB_STATIC = "UB_STATIC";
-        // Events of wgmma.mma_async
+        // Events of wgmma.mma_async; WGMMA_FENCE: wgmma.fence
         public static final String WGMMA = "WGMMA";
+        public static final String WGMMA_FENCE = "WGMMA_FENCE";
         // Number of grids a test may use; events of grid k carry grid(k), griddepcontrol.wait in grid k gridWait(k)
         public static final int GRIDS = 4;
         // Events of asynchronous operations (cp.async, cp.async.bulk, cp.reduce.async.bulk, st.async, red.async,

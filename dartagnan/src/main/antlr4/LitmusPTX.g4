@@ -116,6 +116,12 @@ operand
     |   multicastTargets
     |   location index?
     |   constant (Colon constant)*
+    |   fraction
+    ;
+
+// 1.0: the fraction operand of createpolicy.fractional
+fraction
+    :   DigitSequence Period DigitSequence
     ;
 
 // d0+d1: one destination per CTA of a multicast copy
