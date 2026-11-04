@@ -42,6 +42,12 @@ public final class PTXMbarrierState {
         return field(state, 3);
     }
 
+    // True iff an arrive-on with the given count keeps the pending arrival count of the state at or above zero
+    public static Expression canArrive(Expression state, Expression count) {
+        final IntegerType type = (IntegerType) state.getType();
+        return expressions.makeLTE(expressions.makeCast(count, type, false), field(state, 1), false);
+    }
+
     // waitComplete for the phase whose parity is given: true iff that phase is the preceding (completed) one
     public static Expression parityComplete(Expression state, Expression parity) {
         final IntegerType type = (IntegerType) state.getType();

@@ -688,10 +688,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             Expression quorum = operands.size() > 2 ? parseSingleValue(q, operands.get(2)) : null;
             barrier = EventFactory.newNamedBarrier(mode, instanceId, Tag.PTX.CTA, id, quorum);
         }
-        if (mode.equals("arrive")) {
-            barrier.addTags(Tag.PTX.ARRIVE);
-        }
-        return List.of(barrier);
+        return withBarrierWait(barrier, mode);
     }
 
     // bar.sync a{, b}, bar.arrive a, b, barrier{.cta}.sync{.aligned} a{, b}, barrier{.cta}.arrive{.aligned} a, b:
@@ -718,10 +715,19 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         final Expression quorum = operands.size() > 1 ? parseSingleValue(q, operands.get(1)) : null;
         final String instanceId = "bar" + resource + "#" + nextBarrierInstance("bar" + resource);
         final Event barrier = EventFactory.newNamedBarrier(mode, instanceId, Tag.PTX.CTA, id, quorum);
+        return withBarrierWait(barrier, mode);
+    }
+
+    // An arrive only signals; the wait of a sync acts as a fence.acq_rel.cta of the thread after its own arrival
+    // (22300-22304, M29)
+    private List<Event> withBarrierWait(Event barrier, String mode) {
         if (mode.equals("arrive")) {
             barrier.addTags(Tag.PTX.ARRIVE);
+            return List.of(barrier);
         }
-        return List.of(barrier);
+        final Event fence = EventFactory.PTX.newFence("fence");
+        fence.addTags(Tag.PTX.ACQ_REL, Tag.PTX.CTA, Tag.PTX.GEN);
+        return List.of(barrier, fence);
     }
 
     // bar.warp.sync mask: bit k of the mask is thread Pk; the threads of the mask synchronize.
@@ -840,14 +846,27 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
                     PTXMbarrierState.phase(old)));
         }
         events.addAll(newValidityCheck(old));
+        if (arrive) {
+            events.addAll(newArriveCheck(old, count));
+        }
         return events;
     }
 
     // Executes an undefined-behaviour event if the mbarrier state read is not a valid object
     private List<Event> newValidityCheck(Register state) {
-        final Label valid = programBuilder.getOrCreateLabel(mainThread, "__mbarrier_valid" + waitCount++);
-        return List.of(EventFactory.newJump(PTXMbarrierState.isValid(state), valid),
-                new GenericVisibleEvent("undefined_behaviour", Tag.PTX.UB), valid);
+        return newUndefinedUnless(PTXMbarrierState.isValid(state));
+    }
+
+    // Executes an undefined-behaviour event if an arrive-on takes the pending arrival count below zero: its valid
+    // range starts at 0 (23989-23993)
+    private List<Event> newArriveCheck(Register state, Expression count) {
+        return newUndefinedUnless(PTXMbarrierState.canArrive(state, count));
+    }
+
+    private List<Event> newUndefinedUnless(Expression condition) {
+        final Label defined = programBuilder.getOrCreateLabel(mainThread, "__mbarrier_valid" + waitCount++);
+        return List.of(EventFactory.newJump(condition, defined),
+                new GenericVisibleEvent("undefined_behaviour", Tag.PTX.UB), defined);
     }
 
     private Register newMbarrierStateRegister() {
@@ -1060,6 +1079,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         slot.addFootprint(arrive);
         final List<Event> events = new ArrayList<>(List.of(arrive));
         events.addAll(newValidityCheck(old));
+        events.addAll(newArriveCheck(old, count));
         return events;
     }
 
