@@ -1,0 +1,12 @@
+PTX WRC+barrier.sync+reader-side
+{
+x=0;
+f=0;
+P1:r0=0;
+P2:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 0,cluster 0,gpu 0 | P2@cta 0,cluster 0,gpu 0 ;
+ st.weak x, 1             | ld.relaxed.cta r0, f     | barrier.sync 0           ;
+ st.release.cta f, 1      | barrier.sync 0           | ld.weak r1, x            ;
+exists
+(P1:r0 == 1 /\ P2:r1 == 0)

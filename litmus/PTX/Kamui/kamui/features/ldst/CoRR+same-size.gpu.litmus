@@ -1,0 +1,12 @@
+PTX CoRR+same-size.gpu
+{
+x[0]=0;
+x[1]=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0   | P1@cta 1,cluster 0,gpu 0    ;
+ st.relaxed.gpu.b16 x[0], 1 | ld.relaxed.gpu.b16 r0, x[0] ;
+                            | ld.relaxed.gpu.b16 r1, x[0] ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)
