@@ -19,7 +19,9 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
   `atom.inc r0, x, 3`, ... A qualifier the parser does not know is an error. Defaults follow the manual: `ld`/`st`
   are `.weak`, `atom`/`red` are `.relaxed.gpu`, `fence` is `.acq_rel`, `membar.{cta,gl,sys}` is `fence.sc`;
 - `.volatile` (M8), `.mmio` (M9), `ld.global.nc` (M10), `ldu` (M11), performance hints (M12, M13);
-- vectors: `st.release.gpu.v2 x, y, 1, 1`, `ld.weak.v2 r0, r1, x, y` (M18);
+- vectors: `st.release.gpu.v2 x, y, 1, 1`, `ld.weak.v2 r0, r1, x, y` (M18); vector atomics:
+  `atom.relaxed.gpu.global.v2.f32.add r0, r1, x, y, 1, 1`, `red.relaxed.gpu.global.v2.f32.add x, y, 1, 1` (M53);
+- values are integers; in `.f16`, `.bf16`, `.f32` and `.f64` operations a value v stands for the number v (M52);
 - granules: a location declared `x[0]=0; x[1]=0;` has two granules; `x` names both, `x[1]` one. A store of one
   value writes it to every granule, `1:2` gives one value per granule; a load of `x` into `r0` fills `r0[0]`,
   `r0[1]`. Conditions may name `x[1]` and `P1:r0[1]` (M14).
@@ -28,7 +30,9 @@ Besides the forms of the PTX 6.0 and 7.5 tests, the PTX parser accepts:
 - mbarrier objects: `b=mbarrier(2)` (initialized), `b=mbarrier()` (uninitialized); transaction counts count copied
   locations; `mbarrier.arrive [r,] b` returns the phase as state token (M32-M35);
 - asynchronous operations, with multicast destinations written `d0+d1` and mbarriers `b0+b1`; a tensor copy names
-  its tensor map and a register for the value read from it (M39-M46);
+  its tensor map and a register for the value read from it, after the mbarrier (loads) or after the shared source
+  (stores and reductions) (M39-M46, M54, M55);
+- `bar.warp.sync -1`: bit k of the mask is thread Pk, bits of threads the test does not have are ignored (M30);
 - `m=multimem(x, y)` (M47); `wgmma.mma_async r, a, c` (M48); placement `,grid N` (M49).
 
 ## Model files and verdicts
@@ -210,7 +214,7 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   priorities (15696), `L2::cache_hint` (16673-16674) and prefetch sizes (16664).
 - **Tests.** `Kamui/kamui/ptx87/hints/*`, `Kamui/kamui/ptx87/ld-st/MP+cache-operators`.
 
-### M13. `prefetch`, `prefetchu`, `applypriority`, `createpolicy`, `cp.async.bulk.prefetch`
+### M13. `prefetch`, `prefetchu`, `applypriority`, `createpolicy`, `cp.async.bulk.prefetch{.tensor}`
 
 - **Question.** Do these instructions access memory in the sense of the model?
 - **Manual.** 17585: "The prefetch instruction brings the cache line containing the specified address in global or
@@ -218,10 +222,18 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   by address a is not already present in the specified cache level, then the data will be prefetched before
   applying the specified priority." 17740: createpolicy "creates a cache eviction policy". 19426
   (`cp.async.bulk.prefetch`): "Provides a hint to the system to initiate the asynchronous prefetch of data to the
-  cache." None of them is a read or a write in Table 20 (6616-6625).
-- **Alternatives.** (a) no memory event; (b) a weak read whose value is discarded.
-- **Choice.** (a). (b) could not change an outcome either. `createpolicy` writes an opaque value into its register.
-- **Tests.** `Kamui/kamui/ptx87/hints/MP+prefetch*`, `MP+applypriority`, `MP+bulk-prefetch`.
+  cache." 17588-17590 (`prefetch.tensormap`): "brings the cache line containing the specified address in the .const
+  or .param memory state space for subsequent use by the cp.async.bulk.tensor instruction." 19984
+  (`cp.async.bulk.prefetch.tensor`): "Provides a hint to the system to initiate the asynchronous prefetch of tensor
+  data to the cache." None of them is a read or a write in Table 20 (6616-6625).
+- **Alternatives.** (a) no memory event; (b) a weak read whose value is discarded; for `prefetch.tensormap`, (c) a
+  read of the tensor map in the tensormap proxy.
+- **Choice.** (a). (b) could not change an outcome either. (c) would make the prefetch a tensormap-proxy access,
+  which the manual does not say; a later tensor copy reads the map itself. `createpolicy` writes an opaque value into
+  its register; its other operands (`createpolicy.fractional ... r, 1.0`) are not used.
+- **Tests.** `Kamui/kamui/ptx87/hints/MP+prefetch*`, `MP+applypriority`, `MP+bulk-prefetch`;
+  `Kamui/kamui/features/misc/*createpolicy*`, `*prefetch-tensormap*`, `*bulk-prefetch-tensor*` (MP with release and
+  acquire forbidden, relaxed allowed; CoWR and value tests forbidden).
 
 ### M14. Granules and footprints in the test dialect
 
@@ -255,6 +267,10 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   and of an older write, and two writes are ordered the same way on all granules; (b) granules are independent.
 - **Choice.** (a), as the axioms are stated for operations and bytes. Pairs that are not morally strong (e.g. weak
   ones) get no such guarantee, so they may tear. The granule events of one operation are unordered in program order.
+  These properties hold between the granules of one operation only (cat relation `granules`), not between the
+  elements of a vector operation, which are separate operations (M18, M53); a first version applied them to every
+  event of an instruction. A vector access whose elements are locations with several granules would be treated as
+  one wide operation; no test has one.
 - **Tests.** `Kamui/kamui/ptx87/sizes/tearing+relaxed` (forbidden), `Kamui/kamui/ptx87/sizes/tearing+weak` (allowed).
 
 ### M16. Mixed-size data races
@@ -307,7 +323,9 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   before the first instruction in that pattern."
 - **Alternatives.** (a) elements unordered; a release element covers operations of earlier instructions only;
   (b) elements in operand order.
-- **Choice.** (a): "unspecified order"; the siblings are part of the pattern's instruction, not before it.
+- **Choice.** (a): "unspecified order"; the siblings are part of the pattern's instruction, not before it. The
+  elements are separate operations, so single-copy atomicity does not hold across them (unlike the granules of one
+  wide operation, M15).
 - **Tests.** `Kamui/kamui/ptx87/sizes/MP+vector-release` (allowed), `MP+vector-release+data` (forbidden).
 
 ### M19. `.b128` accesses
@@ -473,8 +491,12 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
 - **Alternatives.** (a) the members synchronize like `bar.sync` among them; (b) no memory effect, since 8.9.4 does not
   list it.
 - **Choice.** (a), as 22448-22450 promises. In the dialect bit k of the mask is thread Pk; all members must be in the
-  executing thread's CTA, and the executing thread must be a member (otherwise the test is rejected).
-- **Tests.** `Kamui/kamui/ptx87/bar/MP+bar.warp.sync` (forbidden), `MP+bar.warp.sync+non-member` (allowed).
+  executing thread's CTA, and the executing thread must be a member (otherwise the test is rejected). The manual's
+  mask is 32 bits, one per lane (22443-22444); bits of threads the test does not have stand for lanes without a
+  litmus thread and are ignored, so `-1` (all lanes) names every thread of the test, and the barrier waits only for
+  threads that exist.
+- **Tests.** `Kamui/kamui/ptx87/bar/MP+bar.warp.sync` (forbidden), `MP+bar.warp.sync+non-member` (allowed);
+  `Kamui/kamui/features/bar/MP+bar.warp.sync.all+*` (forbidden), `after-bar.warp.sync.all+*` (allowed).
 
 ### M31. `barrier.cluster` arrive and wait
 
@@ -783,12 +805,25 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   matrices and subsequent reads of the same matrices in a wgmma.mma_async instruction." 33416-33434: `wgmma.fence`
   orders register accesses and "must be issued ... Before the first wgmma.mma_async operation in a warpgroup".
   33526-33540 (`wgmma.wait_group`).
-- **Choice.** In the dialect `wgmma.mma_async r, a, c` reads the shared locations `a` and `c` in the async proxy (`r`
-  gets the value of `a`). It is ordered only after prior fences, so a prior generic write reaches it only through
-  `fence.proxy.async`. `wgmma.commit_group`/`wait_group` form wgmma async-groups (M40). A `wgmma.mma_async` without a
-  prior `wgmma.fence` in its thread is undefined behaviour that does not depend on values; it is flagged (M51).
+  33426-33428: "wgmma.fence instruction establishes an ordering between prior accesses to any warpgroup registers and
+  subsequent accesses to the same registers by a wgmma.mma_async instruction."
+- **Alternatives.** What orders a wgmma's operand reads after earlier instructions of its thread: (a) any earlier
+  fence; (b) the `wgmma.fence` operations before it: everything before the latest one is ordered before the wgmma;
+  (c) nothing but the async proxy fence of 33443.
+- **Choice.** (b). 6886-6887 take wgmma out of the default order, and 33426-33443 make `wgmma.fence` the point where
+  the warpgroup orders its accesses before a wgmma. The sentence of 33443 is about writes that cross from the generic
+  proxy into the async proxy: those still need `fence.proxy.async` before the `wgmma.fence`. So a copy waited for on
+  an mbarrier, then `wgmma.fence`, then the wgmma: the wgmma sees the copied data. In the model `wgmma.fence` is an
+  event (tag `WGMMA_FENCE`, not a memory fence) and `issue` reaches a wgmma only through it. A first version of the
+  model chose (a) with no event for `wgmma.fence`.
+  In the dialect `wgmma.mma_async r, a, c` reads the shared locations `a` and `c` in the async proxy (`r` gets the
+  value of `a`). `wgmma.commit_group`/`wait_group` form wgmma async-groups (M40). A `wgmma.mma_async` without a prior
+  `wgmma.fence` in its thread is undefined behaviour that does not depend on values; it is flagged (M51).
+- **Cross-check.** Decided reading (b), shared decision D24 in kamui-isa's `models/ptx87/decisions.md`.
 - **Tests.** `Kamui/kamui/ptx87/wgmma/*` (`wgmma+fence.proxy.async+wgmma.fence` forbidden, `wgmma+no-proxy-fence`
-  allowed, `wgmma+no-wgmma.fence` flagged: allowed).
+  allowed, `wgmma+no-wgmma.fence` flagged: allowed); `Kamui/kamui/idioms/tma-pipeline-raw+wgmma`,
+  `wgmma-operand-from-other-warpgroup`, `Kamui/kamui/features/wgmma/RAW-other-thread+fence` (forbidden; allowed
+  under (a)); `features/wgmma/RAW+fence.proxy.async+{no-wait,wait0}` (no `wgmma.fence`: allowed, and flagged).
 
 ### M49. griddepcontrol
 
@@ -824,6 +859,75 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   of the model switched the axioms off in such executions instead.
 - **Cross-check.** Decided reading as M35, shared decision D7 in kamui-isa's `models/ptx87/decisions.md`.
 - **Tests.** `Kamui/kamui/ptx87/wgmma/wgmma+no-wgmma.fence` (`program_spec` forbidden, flagged: allowed).
+
+### M52. Floating-point atomic operations
+
+- **Question.** `atom.add.noftz.f16` and other floating-point atomic operations compute on floating-point values; the
+  test dialect has integer values only.
+- **Manual.** 22897-22900: "The floating-point operation .add operation rounds to nearest even. Current
+  implementation of atom.add.f32 on global memory flushes subnormal inputs and results to sign-preserving zero".
+  22902-22904: "atom.add.f16, atom.add.f16x2, atom.add.bf16 and atom.add.bf16x2 operation requires the .noftz
+  qualifier; it preserves subnormal inputs and results, and does not flush them to zero."
+- **Alternatives.** (a) the operation on the numbers the litmus values stand for, computed as integer arithmetic;
+  (b) a nondeterministic result.
+- **Choice.** (a). The dialect writes the number v as the value v; for the small integers the tests use every sum is
+  exact in every format, so rounding and subnormals do not arise. The type does not change the footprint (M14).
+- **Tests.** `Kamui/kamui/features/rmw/LU+add.f16.*` (lost update forbidden when the two operations are morally
+  strong, allowed otherwise).
+
+### M53. Vector atomic operations
+
+- **Question.** `atom` and `red` with `.v2`, `.v4`, `.v8` access several elements. Is the whole operation atomic,
+  and how are the elements ordered?
+- **Manual.** 22878-22880: "atom instruction on packed type or vector type, accesses adjacent scalar elements in
+  memory. In such cases, the atomicity is guaranteed separately for each of the individual scalar elements; the
+  entire atom is not guaranteed to be atomic as a single access." 23160-23162 (the same for `red`). 22815-22816:
+  vector `atom` only in `.global`. 6569-6572: vector operations are scalar operations "executed in an unspecified
+  order".
+- **Alternatives.** (a) one atomic operation per element, unordered among themselves (as M18); (b) one atomic
+  operation on all elements.
+- **Choice.** (a), as stated. In the dialect each element names its own register, location and value, as in
+  `st.v2 x, y, 1, 1`. Only `add`, `min`, `max` (22831-22870) and `.global` or no state space are accepted.
+- **Tests.** `Kamui/kamui/features/rmw/LU+add.v2.*` (as scalar), `tear+red.v2.*` (allowed: one element old, the other
+  new), `CoWR+red.v2.*` (forbidden).
+
+### M54. Tensor stores, tensor reductions and tensor load modes
+
+- **Question.** What do `cp.async.bulk.tensor` from shared memory to global memory and `cp.reduce.async.bulk.tensor`
+  do, and do the load modes (`.tile`, `.im2col`, ...) matter?
+- **Manual.** 19562-19570: the `shared::cta -> global` form completes through `.bulk_group` with load modes
+  `.tile, .tile::scatter4, .im2col_no_offs`. 19956-19959: "Each reduction operation performed by
+  cp.reduce.async.bulk.tensor has individually .relaxed.gpu memory ordering semantics. The load operations in
+  cp.reduce.async.bulk.tensor are treated as weak memory operations". 19591: "The tensorMap is accessed in tensormap
+  proxy." 19544, 19557: load modes of the loads.
+- **Alternatives.** For the modes: (a) they only change how coordinates map to addresses; (b) different memory
+  semantics per mode.
+- **Choice.** A tensor store is the bulk store (M44: async-proxy read of the shared source, async-proxy write of the
+  destination, in the thread's bulk async-group) preceded by the read of the tensor map in the tensormap proxy, as for
+  tensor loads; a tensor reduction is the bulk reduction (relaxed `.gpu` per element, weak loads) preceded by the same
+  read. The map read belongs to the operation's async-group, so a wait for the group covers it. For the modes (a):
+  the manual describes them only through the coordinates `tensorCoords` (19596-19598), and in the dialect a copy
+  names its locations.
+- **Tests.** `Kamui/kamui/features/async/TMA-tensor-store*`, `TMA-tensor-reduce*` (forbidden only with the proxy fence
+  and a full wait), `tensor-reduce+atomic+*` (allowed: the generic `red` and the async reduction are not morally
+  strong), `TMA-tensor-im2col*` (as the `.tile` loads).
+
+### M55. Bulk copies from the CTA's shared memory into the cluster's shared memory
+
+- **Question.** What does `cp.async.bulk.shared::cluster.shared::cta.mbarrier::complete_tx::bytes d, s, b` do, and what
+  if `d` is in the executing CTA?
+- **Manual.** 19032-19033 (the form). 19067-19068: "When the source of the copy is .shared::cta and the destination is
+  .shared::cluster, the destination has to be in the shared memory of a different CTA within the cluster." The
+  sentence before it (19064-19065), on `.shared::cta` destinations, ends "otherwise the behavior is undefined".
+- **Alternatives.** For a destination in the executing CTA: (a) undefined behaviour; (b) an ordinary copy; (c) a parse
+  error.
+- **Choice.** The copy reads `s` (shared memory of the executing CTA) and writes `d` in the async proxy, and completes
+  with a release `.cluster` complete-tx on `b`, which must be in `d`'s CTA (M42, M44). For a destination in the
+  executing CTA (a): "has to be" states a requirement the program breaks, and the neighbouring sentence makes such a
+  breach undefined. It is visible in the program text, so it is flagged like M51 (`undefined-behaviour`), and the copy
+  is still modelled. (c) would leave tests undecided.
+- **Tests.** `Kamui/kamui/features/async/DSMEM-copy+fence` (forbidden), `DSMEM-copy+no-fence`, `DSMEM-copy-war+*`
+  (allowed), `self-copy*` (flagged: allowed; `self-copy+fence+wait` is forbidden by `program_spec`).
 
 ## Tests Dartagnan cannot decide
 
