@@ -19,7 +19,7 @@
 // State space tags: GLOBAL, SHARED, SHARED_CTA (shared memory of the accessing thread's CTA), LOCAL, CONST, PARAM
 // Other tags: VOL (volatile), MMIO (mmio), both also RLX and SYS (M8, M9);
 //             WHOLE / PART: the access covers every granule / a single granule of a location with several (M14)
-//             MBAR: an access to an mbarrier object (M32), MBAR_INIT: mbarrier.init;
+//             MBAR: an access to an mbarrier object (M32), MBAR_INIT: mbarrier.init; WGMMA_FENCE: wgmma.fence (M48);
 //             UB, UB_STATIC: undefined behaviour (M35, M51)
 
 (*******************)
@@ -62,8 +62,9 @@ let cpasync-arrive-order = [AOP & CPASYNC]; po0; [CPASYNC_ARRIVE]
 let po = ((po0 \ ((AOP * _) | (_ * AOP))) | async-internal | completion | cpasync-arrive-order)+
 // An asynchronous operation is ordered after the prior instructions of its thread (6886), but this order does not
 // extend through it to other operations (6899-6901): it is only used to reach the operation's own accesses.
-// wgmma.mma_async is not ordered after prior instructions (6886-6887) except through a fence (32614-32618, M48)
-let issue = ([~AOP]; po0; [AOP & ~WGMMA]) | ([F]; po0; [AOP & WGMMA])
+// wgmma.mma_async is not ordered after prior instructions (6886-6887) except through the wgmma.fence operations
+// before it (33416-33443, M48)
+let issue = ([~AOP]; po0; [AOP & ~WGMMA]) | ([~AOP]; po0?; [WGMMA_FENCE]; po0; [AOP & WGMMA])
 
 // Coherence order is a partial transitive order (8.9.6); recompute fr from it
 let co = co+
@@ -89,6 +90,8 @@ let ms-scope = (po | po^-1) | ([strong-operation]; sr; [strong-operation])
               | ([AOP & MBAR]; vloc; [MBAR]) | ([MBAR]; vloc; [AOP & MBAR])
 // Two memory operations overlap completely if they access the same granules (M14)
 let partial-overlap = vloc & ((WHOLE * PART) | (PART * WHOLE))
+// The granule events of one wide operation (M15); the elements of a vector operation are separate operations (M18, M53)
+let granules = si & (WHOLE * WHOLE)
 let complete-overlap = vloc \ partial-overlap
 let ms-overlap = ((M * M) & complete-overlap) | ((_ * _) \ (M * M))
 let morally-strong = (ms-scope & same-proxy & ms-overlap) \ id

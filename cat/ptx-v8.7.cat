@@ -26,7 +26,7 @@ empty ((([W]; morally-strong; [W]) & loc) \ (co | co^-1)) as axiom-Coherence2
 // Coherence order relates write operations: a morally strong pair of writes to several granules is ordered the
 // same way on all of them (M15)
 let ms-co = morally-strong & co
-irreflexive (ms-co; si; ms-co; si) as axiom-Coherence-granules
+irreflexive (ms-co; granules; ms-co; granules) as axiom-Coherence-granules
 
 (* 8.10.2 Fence-SC: causality order between fences is base causality order (M5) *)
 empty ((([F & SC]; cause-base; [F & SC]) & morally-strong) \ sync_fence) as axiom-FenceSC
@@ -34,7 +34,7 @@ empty ((([F & SC]; cause-base; [F & SC]) & morally-strong) \ sync_fence) as axio
 (* 8.10.3 Atomicity *)
 // Single-copy atomicity: a read does not read some granules from a morally strong write and others from
 // writes that precede it in coherence order (M15)
-irreflexive ((morally-strong & fr); si; (morally-strong & rf); si) as axiom-SingleCopyAtomicity
+irreflexive ((morally-strong & fr); granules; (morally-strong & rf); granules) as axiom-SingleCopyAtomicity
 // Atomicity of read-modify-write operations
 empty (((morally-strong & fr); (morally-strong & co)) & rmw) as axiom-Atomicity
 // 8.7.2: overlapping atomic operations whose scopes include each other are atomic also when they overlap
