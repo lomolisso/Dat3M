@@ -311,6 +311,7 @@ litmus/PTX/Kamui/kamui/features/async/DSMEM-copy+fence.litmus,0
 litmus/PTX/Kamui/kamui/features/async/DSMEM-copy+no-fence.litmus,1
 litmus/PTX/Kamui/kamui/features/async/DSMEM-copy-war+fence.litmus,1
 litmus/PTX/Kamui/kamui/features/async/DSMEM-copy-war+no-fence.litmus,1
+litmus/PTX/Kamui/kamui/features/async/generic-to-async+acquire-restrict.litmus,0
 litmus/PTX/Kamui/kamui/features/async/generic-to-async+all.litmus,0
 litmus/PTX/Kamui/kamui/features/async/generic-to-async+global.litmus,1
 litmus/PTX/Kamui/kamui/features/async/generic-to-async+none.litmus,1
@@ -319,6 +320,8 @@ litmus/PTX/Kamui/kamui/features/async/generic-to-async-other-thread+global.litmu
 litmus/PTX/Kamui/kamui/features/async/generic-to-async-other-thread+none.litmus,1
 litmus/PTX/Kamui/kamui/features/async/generic-to-async-other-thread+shared-cluster.litmus,0
 litmus/PTX/Kamui/kamui/features/async/generic-to-async-other-thread+shared-cta.litmus,0
+litmus/PTX/Kamui/kamui/features/async/generic-to-async+release-restrict.litmus,0
+litmus/PTX/Kamui/kamui/features/async/generic-to-async+release-restrict+other-thread.litmus,0
 litmus/PTX/Kamui/kamui/features/async/generic-to-async+shared-cluster.litmus,0
 litmus/PTX/Kamui/kamui/features/async/generic-to-async+shared-cta.litmus,0
 litmus/PTX/Kamui/kamui/features/async/LU+red.async.litmus,0
@@ -487,6 +490,7 @@ litmus/PTX/Kamui/kamui/features/bar/MP+barrier.sync.aligned.1+global.litmus,0
 litmus/PTX/Kamui/kamui/features/bar/MP+barrier.sync.aligned.1+shared.litmus,0
 litmus/PTX/Kamui/kamui/features/bar/MP+barrier.sync.aligned.3+global.litmus,0
 litmus/PTX/Kamui/kamui/features/bar/MP+barrier.sync.aligned.3+shared.litmus,0
+litmus/PTX/Kamui/kamui/features/bar/MP+bar.sync.2gen.litmus,0
 litmus/PTX/Kamui/kamui/features/bar/MP+bar.warp.sync.3+global.litmus,0
 litmus/PTX/Kamui/kamui/features/bar/MP+bar.warp.sync.3+shared.litmus,0
 litmus/PTX/Kamui/kamui/features/bar/MP+bar.warp.sync.all+global.litmus,0
@@ -497,6 +501,20 @@ litmus/PTX/Kamui/kamui/features/bar/SB+barrier.sync.1+global.litmus,0
 litmus/PTX/Kamui/kamui/features/bar/SB+barrier.sync.1+shared.litmus,0
 litmus/PTX/Kamui/kamui/features/bar/SB+barrier.sync.3+global.litmus,0
 litmus/PTX/Kamui/kamui/features/bar/SB+barrier.sync.3+shared.litmus,0
+litmus/PTX/Kamui/kamui/features/bar/WRC+barrier.sync+reader-side.litmus,1
+litmus/PTX/Kamui/kamui/features/bar/WRC+barrier.sync+relaxed-acquire.litmus,0
+litmus/PTX/Kamui/kamui/features/bar/WRC+barrier.sync+relaxed-relaxed.litmus,1
+litmus/PTX/Kamui/kamui/features/bar/WRC+barrier.sync+release-acquire.litmus,0
+litmus/PTX/Kamui/kamui/features/bar/WRC+bar.sync+reader-side.litmus,1
+litmus/PTX/Kamui/kamui/features/bar/WRC+bar.sync+relaxed-acquire.litmus,0
+litmus/PTX/Kamui/kamui/features/bar/WRC+bar.sync+relaxed-relaxed.litmus,1
+litmus/PTX/Kamui/kamui/features/bar/WRC+bar.sync+release-acquire.litmus,0
+litmus/PTX/Kamui/kamui/features/fence/MP+fence.acquire-acquire.cta.litmus,1
+litmus/PTX/Kamui/kamui/features/fence/MP+fence.acquire-acquire.gpu.litmus,1
+litmus/PTX/Kamui/kamui/features/fence/MP+fence.acquire-release.cta.litmus,1
+litmus/PTX/Kamui/kamui/features/fence/MP+fence.acquire-release.gpu.litmus,1
+litmus/PTX/Kamui/kamui/features/fence/MP+fence.release-release.cta.litmus,1
+litmus/PTX/Kamui/kamui/features/fence/MP+fence.release-release.gpu.litmus,1
 litmus/PTX/Kamui/kamui/features/fence/MP+membar.cta+diff-cluster.litmus,1
 litmus/PTX/Kamui/kamui/features/fence/MP+membar.cta+same-cluster.litmus,1
 litmus/PTX/Kamui/kamui/features/fence/MP+membar.cta+same-cta.litmus,0
@@ -515,6 +533,10 @@ litmus/PTX/Kamui/kamui/features/fence/SB+membar.gl+same-cta.litmus,0
 litmus/PTX/Kamui/kamui/features/fence/SB+membar.sys+diff-cluster.litmus,0
 litmus/PTX/Kamui/kamui/features/fence/SB+membar.sys+same-cluster.litmus,0
 litmus/PTX/Kamui/kamui/features/fence/SB+membar.sys+same-cta.litmus,0
+litmus/PTX/Kamui/kamui/features/ldst/2W+tear+relaxed.cta.litmus,0
+litmus/PTX/Kamui/kamui/features/ldst/2W+tear+relaxed.gpu.litmus,0
+litmus/PTX/Kamui/kamui/features/ldst/2W+tear+weak.cta.litmus,1
+litmus/PTX/Kamui/kamui/features/ldst/2W+tear+weak.gpu.litmus,1
 litmus/PTX/Kamui/kamui/features/ldst/const+initial+global+diff-cluster.litmus,1
 litmus/PTX/Kamui/kamui/features/ldst/const+initial+global+same-cluster.litmus,1
 litmus/PTX/Kamui/kamui/features/ldst/const+initial+global+same-cta.litmus,1
@@ -523,6 +545,8 @@ litmus/PTX/Kamui/kamui/features/ldst/const+other+global+same-cluster.litmus,0
 litmus/PTX/Kamui/kamui/features/ldst/const+other+global+same-cta.litmus,0
 litmus/PTX/Kamui/kamui/features/ldst/const+value-with-global-traffic.litmus,0
 litmus/PTX/Kamui/kamui/features/ldst/const+with-global-traffic.litmus,0
+litmus/PTX/Kamui/kamui/features/ldst/CoRR+mixed-size.cta.litmus,1
+litmus/PTX/Kamui/kamui/features/ldst/CoRR+mixed-size.gpu.litmus,1
 litmus/PTX/Kamui/kamui/features/ldst/CoRR+mmio+global+diff-cluster.litmus,0
 litmus/PTX/Kamui/kamui/features/ldst/CoRR+mmio+global+same-cluster.litmus,0
 litmus/PTX/Kamui/kamui/features/ldst/CoRR+mmio+global+same-cta.litmus,0
@@ -558,6 +582,8 @@ litmus/PTX/Kamui/kamui/features/ldst/CoRR+relaxed.sys+global+diff-cluster.litmus
 litmus/PTX/Kamui/kamui/features/ldst/CoRR+relaxed.sys+global+same-cluster.litmus,0
 litmus/PTX/Kamui/kamui/features/ldst/CoRR+relaxed.sys+global+same-cta.litmus,0
 litmus/PTX/Kamui/kamui/features/ldst/CoRR+relaxed.sys+shared-cta.litmus,0
+litmus/PTX/Kamui/kamui/features/ldst/CoRR+same-size.cta.litmus,1
+litmus/PTX/Kamui/kamui/features/ldst/CoRR+same-size.gpu.litmus,0
 litmus/PTX/Kamui/kamui/features/ldst/CoRR+volatile+dsmem-local.litmus,0
 litmus/PTX/Kamui/kamui/features/ldst/CoRR+volatile+dsmem-remote-reader.litmus,0
 litmus/PTX/Kamui/kamui/features/ldst/CoRR+volatile+dsmem-remote-writer.litmus,0
@@ -767,6 +793,7 @@ litmus/PTX/Kamui/kamui/features/ldst/value+ld.global.nc+global+same-cta.litmus,0
 litmus/PTX/Kamui/kamui/features/ldst/value+ldu+global+diff-cluster.litmus,0
 litmus/PTX/Kamui/kamui/features/ldst/value+ldu+global+same-cluster.litmus,0
 litmus/PTX/Kamui/kamui/features/ldst/value+ldu+global+same-cta.litmus,0
+litmus/PTX/Kamui/kamui/features/mbarrier/arrive-beyond-pending.litmus,0
 litmus/PTX/Kamui/kamui/features/mbarrier/init+fence.acq_rel+use.cluster.litmus,0
 litmus/PTX/Kamui/kamui/features/mbarrier/init+fence.acq_rel+use.cta.litmus,0
 litmus/PTX/Kamui/kamui/features/mbarrier/init+fence+use.cluster.litmus,0
@@ -782,6 +809,7 @@ litmus/PTX/Kamui/kamui/features/mbarrier/inval+after-use.litmus,0
 litmus/PTX/Kamui/kamui/features/mbarrier/inval+race.litmus,0
 litmus/PTX/Kamui/kamui/features/mbarrier/inval+reinit+wait.cluster.litmus,0
 litmus/PTX/Kamui/kamui/features/mbarrier/inval+reinit+wait.cta.litmus,0
+litmus/PTX/Kamui/kamui/features/mbarrier/inval+wait.litmus,0
 litmus/PTX/Kamui/kamui/features/mbarrier/MP+mbarrier.arrive_drop.cluster+local.litmus,0
 litmus/PTX/Kamui/kamui/features/mbarrier/MP+mbarrier.arrive_drop.cluster+remote.litmus,0
 litmus/PTX/Kamui/kamui/features/mbarrier/MP+mbarrier.arrive_drop.cta+local.litmus,0
@@ -1304,6 +1332,7 @@ litmus/PTX/Kamui/kamui/features/wgmma/RAW+fence.proxy.async+wgmma.fence+no-wait.
 litmus/PTX/Kamui/kamui/features/wgmma/RAW+fence.proxy.async+wgmma.fence+wait0.litmus,0
 litmus/PTX/Kamui/kamui/features/wgmma/RAW+no-fence+no-wait.litmus,1
 litmus/PTX/Kamui/kamui/features/wgmma/RAW+no-fence+wait0.litmus,1
+litmus/PTX/Kamui/kamui/features/wgmma/RAW-other-thread+acquire-after-wgmma.fence.litmus,1
 litmus/PTX/Kamui/kamui/features/wgmma/RAW-other-thread+fence.litmus,0
 litmus/PTX/Kamui/kamui/features/wgmma/RAW-other-thread+no-fence.litmus,1
 litmus/PTX/Kamui/kamui/features/wgmma/RAW+wgmma.fence+no-wait.litmus,1
@@ -1340,14 +1369,14 @@ litmus/PTX/Kamui/kamui/idioms/pdl-early-trigger+raw.litmus,0
 litmus/PTX/Kamui/kamui/idioms/pdl-early-trigger+war.litmus,0
 litmus/PTX/Kamui/kamui/idioms/pipeline-async-smem-handoff.litmus,0
 litmus/PTX/Kamui/kamui/idioms/pipeline-async-smem-war.litmus,0
-litmus/PTX/Kamui/kamui/idioms/rs-mainloop-war+ldmatrix.litmus,1
+litmus/PTX/Kamui/kamui/idioms/rs-mainloop-war+ldmatrix.litmus,0
 litmus/PTX/Kamui/kamui/idioms/semaphore-st-release-cumulative.litmus,0
 litmus/PTX/Kamui/kamui/idioms/splitk-fence-red-cumulative.litmus,0
 litmus/PTX/Kamui/kamui/idioms/splitk-fence-red-cumulative+no-fence.litmus,1
 litmus/PTX/Kamui/kamui/idioms/tensormap-update-after-use.litmus,1
 litmus/PTX/Kamui/kamui/idioms/tensormap-update-in-smem.litmus,0
 litmus/PTX/Kamui/kamui/idioms/tensormap-update-in-smem+no-acquire.litmus,1
-litmus/PTX/Kamui/kamui/idioms/tma-multicast-war+remote-arrive.cluster.litmus,1
+litmus/PTX/Kamui/kamui/idioms/tma-multicast-war+remote-arrive.cluster.litmus,0
 litmus/PTX/Kamui/kamui/idioms/tma-multicast-war+remote-arrive.litmus,1
 litmus/PTX/Kamui/kamui/idioms/tma-pipeline-raw+wgmma.litmus,0
 litmus/PTX/Kamui/kamui/idioms/tma-pipeline-war+wgmma.litmus,0
