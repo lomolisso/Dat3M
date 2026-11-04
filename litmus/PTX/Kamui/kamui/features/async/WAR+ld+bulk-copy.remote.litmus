@@ -1,0 +1,14 @@
+PTX WAR+ld+bulk-copy.remote
+{
+g=7;
+d=5 @cta 1;
+e=mbarrier(1) @cta 0;
+b=mbarrier(1) @cta 1;
+P0:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                  | P1@cta 1,cluster 0,gpu 0                          ;
+ mbarrier.try_wait.parity.acquire.cluster r0, e, 0                         | ld.weak.shared::cta r1, d                         ;
+ cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes d, g, b | mbarrier.arrive.release.cluster.shared::cluster e ;
+exists
+(P0:r0 == 1 /\ P1:r1 == 7)

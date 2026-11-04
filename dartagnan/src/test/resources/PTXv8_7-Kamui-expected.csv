@@ -436,6 +436,7 @@ litmus/PTX/Kamui/kamui/features/async/TMA-tensor-tile+no-wait.cluster.litmus,1
 litmus/PTX/Kamui/kamui/features/async/TMA-tensor-tile+no-wait.cta.litmus,1
 litmus/PTX/Kamui/kamui/features/async/TMA-tensor-tile+reader.cluster.litmus,0
 litmus/PTX/Kamui/kamui/features/async/TMA-tensor-tile+reader.cta.litmus,0
+litmus/PTX/Kamui/kamui/features/async/WAR+ld+bulk-copy.remote.litmus,0
 litmus/PTX/Kamui/kamui/features/bar/after-barrier-race.0+global.litmus,1
 litmus/PTX/Kamui/kamui/features/bar/after-barrier-race.0+shared.litmus,1
 litmus/PTX/Kamui/kamui/features/bar/after-barrier-race.1+global.litmus,1
