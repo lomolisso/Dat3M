@@ -200,6 +200,7 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   of read-only data. A first version of the model chose (a), on the ground that `ldu` is not named by 6521.
 - **Cross-check.** Decided reading (b), shared decision D29 in kamui-isa's `models/ptx87/decisions.md`.
 - **Tests.** `Kamui/kamui/ptx87/ld-st/MP+ldu` (allowed; forbidden under (a)).
+- **Changed on 2026-11-11** (main repo D50): `ldu` is an ordinary weak generic load; `ld.global.nc` keeps M10.
 
 ### M12. Cache operators, including `.ca`
 
@@ -327,6 +328,7 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   elements are separate operations, so single-copy atomicity does not hold across them (unlike the granules of one
   wide operation, M15).
 - **Tests.** `Kamui/kamui/ptx87/sizes/MP+vector-release` (allowed), `MP+vector-release+data` (forbidden).
+- **Changed on 2026-11-11**: strong vector loads and stores of at most 16 bytes are single-copy atomic (M58).
 
 ### M19. `.b128` accesses
 
@@ -564,6 +566,7 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
 - **Tests.** `Kamui/kamui/ptx87/mbarrier/*`, `Kamui/kamui/hand/MP+*mbarrier*`. With (b) the remote-arrival tests could
   differ: `MP+mbarrier-remote-arrive.cta` and `MP+mbarrier-remote-arrive+wait.cta` are allowed here because a `.cta`
   scope does not include the other CTA.
+- **Changed on 2026-11-11**: remote arrivals synchronize with `.cta` waits (M60).
 
 ### M33. mbarrier waits
 
@@ -598,6 +601,7 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   the test is rejected). Not modelled: init on a valid object, the rule of 24027-24029, and the sink rule (the dialect
   lets a remote arrive return the token).
 - **Tests.** `Kamui/kamui/ptx87/mbarrier-init/*`.
+- **Changed on 2026-11-11**: an `mbarrier.init` count outside its range is clamped into the state's field, so the object stays valid and the program defined, as in the Alloy model (main repo, hand test `CoWR+mbarrier.init-negative`).
 
 ### M35. Undefined behaviour from misusing an mbarrier object
 
@@ -952,6 +956,7 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   19064-19065.
 - **Tests.** `Kamui/kamui/features/async/DSMEM-copy+fence` (forbidden), `DSMEM-copy+no-fence`, `DSMEM-copy-war+*`
   (allowed), `self-copy*` (flagged: allowed; `self-copy+fence+wait` is forbidden by `program_spec`).
+- **Changed on 2026-11-11** (main repo D51): a copy into the issuing CTA is an ordinary copy, not undefined behaviour.
 
 ### M56. The thread block that performs an asynchronous write into shared memory
 
@@ -986,6 +991,61 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   be issue order (M39). Writes and the other direction (async to generic) still need a proxy fence or the implicit
   fence at completion (M41). (b) was the model's earlier reading.
 - **Tests.** `Kamui/kamui/idioms/rs-mainloop-war+ldmatrix` (forbidden; allowed under (b)).
+
+### M58. Strong vector loads and stores of at most 16 bytes are single-copy atomic
+
+- **Question.** Is a 16-byte `ld.relaxed.gpu.v2.u64` of a status and a value ever torn against one
+  `st.relaxed.gpu.v2.u64`? CCCL's decoupled look-back relies on it never being torn.
+- **Manual.** 6569-6571: vector operations "are modelled as a set of equivalent memory operations with a scalar
+  data type, executed in an unspecified order on the elements".
+- **Choice.** Decided on 2026-11-11 for the stronger reading (main repo D43): the elements of a `.relaxed`,
+  `.acquire` or `.release` vector load or store of at most 16 bytes (the type size times the width, 32 bits if no
+  type) carry `VEC`, and `granules` relates them as the granules of one wide operation for the atomicity axioms.
+  They stay separate for overlap and mixed-size races. Vector atomics stay separate (M53).
+- **Tests.** `Kamui/kamui/idioms/cub-lookback-packed` (forbidden).
+
+### M59. A relaxed atom after a fence.sc of its thread acquires
+
+- **Question.** In last-block retirement (`__threadfence`, then a relaxed `atomicAdd`, then reads of the other
+  CTAs' results), is the reader ordered after the writers?
+- **Manual.** An acquire pattern ends with an acquire operation or an acquire fence (8.8); `atom` defaults to
+  `.relaxed`.
+- **Choice.** Decided on 2026-11-11 (D44): the read of a relaxed `atom` (tag `ATOM_INSTR`; not `red`) after a
+  `fence.sc` in program order ends an acquire pattern.
+- **Tests.** `Kamui/kamui/idioms/last-block-retirement` (forbidden).
+
+### M60. mbarrier waits and updates are morally strong whatever their scopes
+
+- **Question.** Does a remote `.release.cluster` arrive synchronize with a `.cta` wait (M32)?
+- **Choice.** Decided on 2026-11-11 (D47), replacing M32's reading: `ms-scope` relates the waits and
+  read-modify-write updates of one mbarrier object (not `init` and `inval`).
+- **Tests.** `Kamui/kamui/ptx87/mbarrier/MP+mbarrier-remote-*`, `Kamui/kamui/idioms/tma-multicast-war+remote-arrive`
+  (forbidden).
+
+### M61. Operations on virtual aliases can be morally strong
+
+- **Choice.** Decided on 2026-11-11 (D48, as in the mixed-proxy model): complete and partial overlap compare `loc`,
+  not `vloc`. Program order between aliases and proxy-preserved causality still need the alias fence.
+- **Tests.** `Kamui/kamui/hand/MP-self+alias+acquire-release` (forbidden).
+
+### M62. A generic read is ordered before a later write in any proxy
+
+- **Choice.** Decided on 2026-11-11 (D49), widening M57 from async writes to every write of the same address.
+- **Tests.** `Kamui/kamui/hand/LB-self+surface` (forbidden).
+
+### M63. The completion of cp.async is followed by an implicit proxy fence
+
+- **Question.** Does a `wgmma` after an mbarrier wait see data that `cp.async` (generic proxy) wrote, with no
+  `fence.proxy.async`? CUTLASS's `cp.async` main loop relies on it.
+- **Choice.** Decided on 2026-11-11 (D45): a generic operation before a completion (`COMPLETION`, `CPASYNC_ARRIVE`)
+  in base causality order is ordered before the async operations after it, as for the bulk copies (M41).
+- **Tests.** `Kamui/kamui/idioms/cpasync-mbarrier+wgmma` (forbidden).
+
+### M64. griddepcontrol.wait makes the earlier grids' writes visible to every proxy
+
+- **Choice.** Decided on 2026-11-11 (D46): a generic operation of a prerequisite grid is ordered before every later
+  memory operation of the waiting thread, whatever its proxy (M49).
+- **Tests.** `Kamui/kamui/idioms/pdl-wait+tma-load` (forbidden).
 
 ## Tests Dartagnan cannot decide
 
