@@ -1,0 +1,16 @@
+PTX LB-self+alias+async-bulk
+{
+d=0 @cta 0;
+e @ generic aliases d;
+b=mbarrier(1) @cta 0;
+g=1;
+P0:r0=0;
+P0:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                                                  ;
+ ld.weak.shared::cta r0, e                                                 ;
+ mbarrier.arrive.expect_tx.release.cta b, 1                                ;
+ cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes d, g, b ;
+ mbarrier.try_wait.parity.acquire.cta r1, b, 0                             ;
+exists
+(P0:r0 == 1)

@@ -1,0 +1,13 @@
+PTX mixed-size+reads-only
+{
+x[0]=0;
+x[1]=0;
+y=0;
+P0:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 0,gpu 0 ;
+ ld.weak.b32 r0, x        | ld.weak.b16 r0, x[0]     ;
+ st.weak y, 1             |                          ;
+ ld.weak r1, y            |                          ;
+exists
+(P0:r1 == 0)

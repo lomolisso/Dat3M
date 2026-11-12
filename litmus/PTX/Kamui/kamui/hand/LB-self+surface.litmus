@@ -1,0 +1,9 @@
+PTX LB-self+surface
+{
+x = 0;
+}
+ P0@cta 0,gpu 0        ;
+ ld.relaxed.cta r0, x  ;
+ sust.weak x, 1        ;
+exists
+(P0:r0 == 1)

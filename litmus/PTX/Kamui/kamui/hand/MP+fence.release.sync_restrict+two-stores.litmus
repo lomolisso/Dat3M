@@ -1,0 +1,15 @@
+PTX MP+fence.release.sync_restrict+two-stores
+{
+x=0;
+z=0;
+f=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                         | P1@cta 0,cluster 0,gpu 0              ;
+ st.weak.shared::cta x, 1                         | ld.acquire.cluster.shared::cta r0, f  ;
+ st.weak.shared::cta z, 1                         | ld.weak.shared::cta r1, x             ;
+ fence.release.sync_restrict::shared::cta.cluster |                                       ;
+ st.relaxed.cluster.shared::cta f, 1              |                                       ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

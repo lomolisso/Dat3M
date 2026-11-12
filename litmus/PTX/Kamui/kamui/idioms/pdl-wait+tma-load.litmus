@@ -1,0 +1,16 @@
+PTX pdl-wait+tma-load
+{
+g=0;
+d=0 @cta 1;
+f=mbarrier(1) @cta 1;
+P1:r1=0;
+P1:r2=0;
+}
+ P0@cta 0,cluster 0,gpu 0,grid 0 | P1@cta 1,cluster 1,gpu 0,grid 1                                           ;
+ st.weak.global g, 5   | griddepcontrol.wait                                                       ;
+                       | mbarrier.arrive.expect_tx.release.cta f, 1                                ;
+                       | cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes d, g, f ;
+                       | mbarrier.try_wait.parity.acquire.cta r1, f, 0                             ;
+                       | ld.weak.shared::cta r2, d                                                 ;
+exists
+(P1:r1 == 1 /\ P1:r2 != 5)

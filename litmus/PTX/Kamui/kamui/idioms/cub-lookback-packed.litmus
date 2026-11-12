@@ -1,0 +1,11 @@
+PTX cub-lookback-packed
+{
+s=0;
+v=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,gpu 0                 | P1@cta 1,gpu 0                     ;
+ st.relaxed.gpu.v2.u64 s, v, 1, 42 | ld.relaxed.gpu.v2.u64 r0, r1, s, v ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

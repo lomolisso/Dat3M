@@ -1,0 +1,17 @@
+PTX cpasync-mbarrier+wgmma
+{
+g=5;
+d=0 @cta 0;
+c=0 @cta 0;
+b=mbarrier(1) @cta 0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                | P1@cta 0,cluster 0,gpu 0                       ;
+ cp.async.cg.shared.global d, g          | mbarrier.try_wait.parity.acquire.cta r0, b, 0  ;
+ cp.async.mbarrier.arrive.noinc.shared b | wgmma.fence.sync.aligned                       ;
+                                         | wgmma.mma_async.sync.aligned r1, d, c          ;
+                                         | wgmma.commit_group.sync.aligned                ;
+                                         | wgmma.wait_group.sync.aligned 0                ;
+exists
+(P1:r0 == 1 /\ P1:r1 != 5)

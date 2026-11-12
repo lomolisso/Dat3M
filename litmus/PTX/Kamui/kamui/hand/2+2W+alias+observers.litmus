@@ -1,0 +1,14 @@
+PTX 2+2W+alias+observers
+{
+x=0 @cta 0;
+y @ generic aliases x;
+P2:r0=0;
+P2:r1=0;
+P3:r0=0;
+P3:r1=0;
+}
+ P0@cta 0,gpu 0         | P1@cta 0,gpu 0         | P2@cta 0,gpu 0          | P3@cta 0,gpu 0          ;
+ st.relaxed.cta x, 1    | st.relaxed.cta y, 3    | ld.relaxed.cta r0, y    | ld.relaxed.cta r0, x    ;
+ st.relaxed.cta y, 2    | st.relaxed.cta x, 4    | ld.relaxed.cta r1, y    | ld.relaxed.cta r1, x    ;
+exists
+(P2:r0 == 2 /\ P2:r1 == 3 /\ P3:r0 == 4 /\ P3:r1 == 1)

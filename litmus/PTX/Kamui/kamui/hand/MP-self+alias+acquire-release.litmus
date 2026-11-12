@@ -1,0 +1,11 @@
+PTX MP-self+alias+acquire-release
+{
+x=0 @cta 0;
+y @ generic aliases x;
+P0:r0=0;
+}
+ P0@cta 0,gpu 0           ;
+ ld.acquire.gpu r0, x     ;
+ st.release.gpu y, 1      ;
+exists
+(P0:r0 == 1)

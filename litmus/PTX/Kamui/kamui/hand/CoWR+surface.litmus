@@ -1,0 +1,11 @@
+PTX CoWR+surface
+{
+x = 0;
+s @ surface aliases x;
+P0:r0=0;
+}
+ P0@cta 0,gpu 0 ;
+ sust.weak s, 1 ;
+ suld.weak r0, s ;
+exists
+(P0:r0 == 0)

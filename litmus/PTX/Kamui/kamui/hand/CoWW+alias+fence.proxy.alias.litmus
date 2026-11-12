@@ -1,0 +1,11 @@
+PTX CoWW+alias+fence.proxy.alias
+{
+x = 0;
+y @ generic aliases x;
+}
+ P0@cta 0,gpu 0     ;
+ st.weak x, 1       ;
+ fence.proxy.alias  ;
+ st.weak y, 2       ;
+exists
+(x == 1)

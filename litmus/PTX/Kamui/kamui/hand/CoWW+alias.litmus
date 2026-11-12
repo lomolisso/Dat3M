@@ -1,0 +1,10 @@
+PTX CoWW+alias
+{
+x = 0;
+y @ generic aliases x;
+}
+ P0@cta 0,gpu 0 ;
+ st.weak x, 1   ;
+ st.weak y, 2   ;
+exists
+(x == 1)

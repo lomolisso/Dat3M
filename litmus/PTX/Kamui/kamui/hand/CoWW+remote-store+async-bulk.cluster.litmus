@@ -1,0 +1,11 @@
+PTX CoWW+remote-store+async-bulk.cluster
+{
+d=0 @cta 1;
+b=mbarrier(1) @cta 1;
+g=2;
+}
+ P0@cta 0,cluster 0,gpu 0                                                  | P1@cta 1,cluster 0,gpu 0 ;
+ st.weak.shared::cluster d, 1                                              |                          ;
+ cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes d, g, b |                          ;
+exists
+(d == 1)

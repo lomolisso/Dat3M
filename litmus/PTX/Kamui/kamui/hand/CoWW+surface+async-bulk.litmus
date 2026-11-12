@@ -1,0 +1,13 @@
+PTX CoWW+surface+async-bulk
+{
+g=0;
+t @ surface aliases g;
+s=2 @cta 0;
+}
+ P0@cta 0,cluster 0,gpu 0                           ;
+ sust.weak t, 1                                     ;
+ cp.async.bulk.global.shared::cta.bulk_group g, s   ;
+ cp.async.bulk.commit_group                         ;
+ cp.async.bulk.wait_group 0                         ;
+exists
+(g == 1)
