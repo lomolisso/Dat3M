@@ -142,7 +142,7 @@ public class VisitorPTX extends VisitorBase {
         for (String tag : List.of(Tag.PTX.CTA, Tag.PTX.CLUSTER, Tag.PTX.GPU, Tag.PTX.SYS, Tag.PTX.GEN, Tag.PTX.TEX,
                 Tag.PTX.SUR, Tag.PTX.CON, Tag.PTX.ASYNC, Tag.PTX.TMAP, Tag.PTX.WHOLE, Tag.PTX.PART,
                 Tag.PTX.GLOBAL, Tag.PTX.SHARED, Tag.PTX.SHARED_CTA, Tag.PTX.LOCAL, Tag.PTX.CONST, Tag.PTX.PARAM,
-                Tag.PTX.MBAR)) {
+                Tag.PTX.MBAR, Tag.PTX.ATOM_INSTR)) {
             if (source.hasTag(tag)) {
                 target.addTags(tag);
             }

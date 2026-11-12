@@ -82,17 +82,22 @@ let acquire-fence = memory-fence | (F & ACQ)
 let strong-operation = strong-m | release-fence | acquire-fence
 
 (* 8.7 Morally strong operations *)
+let mbar-ops = MBAR & (R | range(rmw))
 let same-proxy = GEN * GEN | SUR * SUR | TEX * TEX | CON * CON | ASYNC * ASYNC | TMAP * TMAP
 // The operations are related in program order, or each operation is strong and
 // specifies a scope that includes the thread executing the other operation.
 let ms-scope = (po | po^-1) | ([strong-operation]; sr; [strong-operation])
               // the complete-tx of an asynchronous operation acts on behalf of the CTA of its mbarrier (M42)
               | ([AOP & MBAR]; vloc; [MBAR]) | ([MBAR]; vloc; [AOP & MBAR])
-// Two memory operations overlap completely if they access the same granules (M14)
-let partial-overlap = vloc & ((WHOLE * PART) | (PART * WHOLE))
-// The granule events of one wide operation (M15); the elements of a vector operation are separate operations (M18, M53)
-let granules = si & (WHOLE * WHOLE)
-let complete-overlap = vloc \ partial-overlap
+              // the waits and read-modify-write updates of one mbarrier object, whatever their scopes (M60)
+              | ([mbar-ops]; vloc; [mbar-ops])
+// Two memory operations overlap completely if they access the same granules (M14), through any virtual address of
+// the memory (M61)
+let partial-overlap = loc & ((WHOLE * PART) | (PART * WHOLE))
+// The granule events of one wide operation (M15), and the elements of a strong vector load or store of at most
+// 16 bytes (M58); other vector operations are separate operations (M18, M53)
+let granules = si & ((WHOLE * WHOLE) | (VEC * VEC))
+let complete-overlap = loc \ partial-overlap
 let ms-overlap = ((M * M) & complete-overlap) | ((_ * _) \ (M * M))
 let morally-strong = (ms-scope & same-proxy & ms-overlap) \ id
 
@@ -103,7 +108,9 @@ let observation = ms-rf; (rmw; ms-rf)*
 (* 8.8 Release and acquire patterns *)
 let po-vloc = po & vloc
 let release-pattern = ([W & REL]; po-vloc?; [strong-write]) | ([release-fence]; po; [strong-write])
-let acquire-pattern = ([strong-read]; po-vloc?; [R & ACQ]) | ([strong-read]; po; [acquire-fence])
+// a relaxed atom after a fence.sc of its thread also acquires (M59)
+let fenced-atom-read = R & RLX & ATOM_INSTR & range([F & SC]; po)
+let acquire-pattern = ([strong-read]; po-vloc?; [(R & ACQ) | fenced-atom-read]) | ([strong-read]; po; [acquire-fence])
 
 (* 8.9.4 Memory synchronization *)
 // A release pattern synchronizes with an acquire pattern if a write of the first precedes a read of the second in
@@ -178,9 +185,14 @@ let proxy-preserved-cause-base
                 // the completion of an asynchronous operation is followed by an implicit generic-async proxy fence
                 // (18763-18765, M41)
                 | vloc & ([M & ASYNC]; cause-base; [COMPLETION]; cbi; [GEN])
-                // a generic read is ordered before a later async write without a proxy fence (write-after-read,
-                // 22306-22307, M57)
-                | vloc & ([GEN & R]; cbi; [ASYNC & W])
+                // a generic read is ordered before a later write of the same address in any proxy without a proxy
+                // fence (write-after-read, 22306-22307, M57, M62)
+                | vloc & ([GEN & R]; cbi; [W])
+                // the implicit generic <-> async proxy fence of a completion also orders earlier generic operations
+                // before later async ones, for cp.async as for the bulk copies (M41, M63)
+                | vloc & ([GEN]; cause-base; [COMPLETION | CPASYNC_ARRIVE]; cbi; [ASYNC])
+                // griddepcontrol.wait makes the earlier grids' writes visible to every proxy (M64)
+                | vloc & ([GEN]; cause-base; [GRIDWAIT1 | GRIDWAIT2 | GRIDWAIT3]; cbi; [M])
 
 (* 8.9.5 Causality order *)
 let cause = proxy-preserved-cause-base | (observation; proxy-preserved-cause-base)

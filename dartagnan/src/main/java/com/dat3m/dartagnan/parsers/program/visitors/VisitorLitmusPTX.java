@@ -344,7 +344,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         }
         q.takeAll(PTXQualifiers.HINTS);
         final int width = parseVectorWidth(q);
-        q.takeOne(PTXQualifiers.TYPES);
+        final boolean atomicVector = isAtomicVector(width, q.takeOne(PTXQualifiers.TYPES), sem);
         q.checkConsumed();
         checkOperandCount(q, operands, 2 * width);
         final List<Event> events = new ArrayList<>();
@@ -355,13 +355,28 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             for (int j = 0; j < slots.size(); j++) {
                 Event load = EventFactory.PTX.newLoad(registers.get(j), slots.get(j).address(), sem.mo);
                 sem.addTags(load);
-                // ld.global.nc and ldu read through the non-coherent texture path (M10, M11)
-                load.addTags(nonCoherent || unified ? Tag.PTX.TEX : proxy);
+                // ld.global.nc reads through the non-coherent texture path (M10); ldu is an ordinary weak load (M11)
+                load.addTags(nonCoherent ? Tag.PTX.TEX : proxy);
+                if (atomicVector) {
+                    load.addTags(Tag.PTX.VEC);
+                }
                 slots.get(j).addFootprint(load);
                 events.add(load);
             }
         }
         return events;
+    }
+
+    // A strong vector load or store of at most 16 bytes is single-copy atomic as a whole (M58); the element size
+    // comes from the type qualifier, 32 bits if there is none
+    private static boolean isAtomicVector(int width, String type, Semantics sem) {
+        if (width < 2 || sem.mo.equals(Tag.PTX.WEAK)) {
+            return false;
+        }
+        final java.util.regex.Matcher m = type == null ? null
+                : java.util.regex.Pattern.compile("[busf](8|16|32|64|128)").matcher(type);
+        final int bits = m != null && m.matches() ? Integer.parseInt(m.group(1)) : 32;
+        return width * bits <= 128;
     }
 
     private List<Event> parseStore(PTXQualifiers q, List<OperandContext> operands) {
@@ -370,7 +385,7 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
         final Semantics sem = parseSemantics(q, STORE_SEMS);
         q.takeAll(PTXQualifiers.HINTS);
         final int width = parseVectorWidth(q);
-        q.takeOne(PTXQualifiers.TYPES);
+        final boolean atomicVector = isAtomicVector(width, q.takeOne(PTXQualifiers.TYPES), sem);
         q.checkConsumed();
         checkOperandCount(q, operands, 2 * width);
         final List<Event> events = new ArrayList<>();
@@ -385,6 +400,9 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
                 Event store = EventFactory.PTX.newStore(slots.get(j).address(), value, sem.mo);
                 sem.addTags(store);
                 store.addTags(proxy);
+                if (atomicVector) {
+                    store.addTags(Tag.PTX.VEC);
+                }
                 slots.get(j).addFootprint(store);
                 events.add(store);
             }
@@ -469,6 +487,9 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
                 }
             };
             atom.addTags(proxy);
+            if (q.getName().equals("atom")) {
+                atom.addTags(Tag.PTX.ATOM_INSTR);
+            }
             slot.addFootprint(atom);
             events.add(atom);
         }
@@ -1157,10 +1178,6 @@ public class VisitorLitmusPTX extends LitmusPTXBaseVisitor<Object> {
             final List<Event> completeTx = newCompleteTx(q, dstOperands.get(i), barrierOperands.get(i));
             events.add(completeTx.get(0));
             checks.addAll(completeTx.subList(1, completeTx.size()));
-        }
-        if (fromShared && spaces.isInOwnCta(dstOperands.get(0).getText(), mainThread)) {
-            // The destination "has to be in the shared memory of a different CTA within the cluster" (19067-19068)
-            checks.add(new GenericVisibleEvent("undefined_behaviour", Tag.PTX.UB_STATIC));
         }
         events.addAll(checks);
         return events;

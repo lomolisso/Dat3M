@@ -302,6 +302,10 @@ public final class Tag {
         // Operations on mbarrier objects, and the mbarrier.init ones among them
         public static final String MBAR = "MBAR";
         public static final String MBAR_INIT = "MBAR_INIT";
+        // The element events of a strong vector load or store of at most 16 bytes: single-copy atomic together (M58)
+        public static final String VEC = "VEC";
+        // The events of an atom instruction (not red): a relaxed one after a fence.sc of its thread acquires (M59)
+        public static final String ATOM_INSTR = "ATOM_INSTR";
         // An event executed only when the program has undefined behaviour; UB_STATIC: undefined behaviour that does
         // not depend on the values read (e.g. a missing wgmma.fence)
         public static final String UB = "UB";

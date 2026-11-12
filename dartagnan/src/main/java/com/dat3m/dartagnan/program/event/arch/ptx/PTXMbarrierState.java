@@ -24,12 +24,18 @@ public final class PTXMbarrierState {
     private PTXMbarrierState() {}
 
     // The state after mbarrier.init with the given count: phase 0, both counts set, tx-count 0.
+    // A count outside the valid range is clamped into the field, so the object stays valid (M34): the Alloy model
+    // keeps such a program defined too.
     public static Expression initial(Expression count, IntegerType type) {
-        return pack(one(type), zero(type), count, count, value(OFFSET, type), type);
+        final Expression c = expressions.makeCast(count, type, true);
+        final Expression clamped = expressions.makeITE(expressions.makeLT(c, zero(type), true), zero(type),
+                expressions.makeITE(expressions.makeLT(c, value(B, type), true), c, value(B - 1, type)));
+        return pack(one(type), zero(type), clamped, clamped, value(OFFSET, type), type);
     }
 
     public static long initial(long count) {
-        return B * B * B * B + count * B * B + count * B + OFFSET;
+        final long c = Math.max(0, Math.min(B - 1, count));
+        return B * B * B * B + c * B * B + c * B + OFFSET;
     }
 
     public static Expression isValid(Expression state) {
