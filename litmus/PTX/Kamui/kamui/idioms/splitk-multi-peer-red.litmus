@@ -1,0 +1,13 @@
+PTX splitk-multi-peer-red
+{
+w=0;
+l=0;
+P2:r0=0;
+P2:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0        | P1@cta 1,cluster 0,gpu 0        | P2@cta 2,cluster 0,gpu 0 ;
+ red.relaxed.gpu.global.add w, 1 | red.relaxed.gpu.global.add w, 1 | ld.acquire.gpu r0, l     ;
+ fence.acq_rel.gpu               | fence.acq_rel.gpu               | ld.weak.global r1, w     ;
+ red.relaxed.gpu.global.add l, 1 | red.relaxed.gpu.global.add l, 1 |                          ;
+exists
+(P2:r0 == 2 /\ P2:r1 != 2)

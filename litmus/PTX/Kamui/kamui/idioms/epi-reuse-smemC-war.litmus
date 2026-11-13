@@ -1,0 +1,17 @@
+PTX epi-reuse-smemC-war
+{
+s=1 @cta 0;
+g=0;
+h=3;
+e=mbarrier(1) @cta 0;
+f=mbarrier(1) @cta 0;
+P2:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0      | P1@cta 0,cluster 0,gpu 0                         | P2@cta 0,cluster 0,gpu 0                                                  ;
+ st.weak.shared::cta s, 2      | bar.sync 1, 2                                    | mbarrier.try_wait.parity.acquire.cta r0, e, 0                             ;
+ fence.proxy.async.shared::cta | cp.async.bulk.global.shared::cta.bulk_group g, s | mbarrier.arrive.expect_tx.release.cta f, 1                                ;
+ bar.sync 1, 2                 | cp.async.bulk.commit_group                       | cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes s, h, f ;
+                               | cp.async.bulk.wait_group.read 0                  |                                                                           ;
+                               | mbarrier.arrive.release.cta e                    |                                                                           ;
+exists
+(P2:r0 == 1 /\ g == 3)

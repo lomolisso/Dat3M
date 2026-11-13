@@ -1,0 +1,14 @@
+PTX rs-transposeB-smem-war
+{
+t=5 @cta 0;
+c=0 @cta 0;
+P0:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0              | P1@cta 0,cluster 0,gpu 0 ;
+ wgmma.fence.sync.aligned              | bar.sync 1, 2            ;
+ wgmma.mma_async.sync.aligned r1, t, c | st.weak.shared::cta t, 7 ;
+ wgmma.commit_group.sync.aligned       |                          ;
+ wgmma.wait_group.sync.aligned 0       |                          ;
+ bar.sync 1, 2                         |                          ;
+exists
+(P0:r1 == 7)

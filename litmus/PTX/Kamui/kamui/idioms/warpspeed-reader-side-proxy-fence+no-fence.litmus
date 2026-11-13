@@ -1,0 +1,14 @@
+PTX warpspeed-reader-side-proxy-fence+no-fence
+{
+s=0 @cta 0;
+g=9;
+m=mbarrier(1) @cta 0;
+P1:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0      | P1@cta 0,cluster 0,gpu 0                         ;
+ st.weak.shared::cta s, 1      | mbarrier.try_wait.parity.acquire.cta r0, m, 0    ;
+ mbarrier.arrive.release.cta m | cp.async.bulk.global.shared::cta.bulk_group g, s ;
+                               | cp.async.bulk.commit_group                       ;
+                               | cp.async.bulk.wait_group.read 0                  ;
+exists
+(P1:r0 == 1 /\ g == 0)

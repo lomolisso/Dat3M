@@ -1,0 +1,12 @@
+PTX onesweep-volatile-lookback
+{
+x=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0 | P1@cta 1,cluster 0,gpu 0 ;
+ st.volatile.global x, 1  | ld.volatile.global r0, x ;
+ st.volatile.global x, 2  | fence.sc.cta             ;
+                          | ld.volatile.global r1, x ;
+exists
+(P1:r0 == 2 /\ P1:r1 == 1)

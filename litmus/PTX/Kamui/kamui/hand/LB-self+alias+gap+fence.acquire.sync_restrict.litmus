@@ -1,0 +1,14 @@
+PTX LB-self+alias+gap+fence.acquire.sync_restrict
+{
+x=0 @cta 0;
+y @ generic aliases x;
+m=mbarrier() @cta 0;
+P0:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0                             ;
+ ld.relaxed.cluster.shared::cta r0, y                 ;
+ mbarrier.init.shared::cta m, 1                       ;
+ fence.acquire.sync_restrict::shared::cluster.cluster ;
+ st.release.cluster.shared::cta x, 1                  ;
+exists
+(P0:r0 == 1)

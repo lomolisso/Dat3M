@@ -1,0 +1,11 @@
+PTX dsmem-red+cluster-barrier
+{
+x=0 @cta 1;
+P1:r0=0;
+}
+ P0@cta 0,cluster 0,gpu 0                     | P1@cta 1,cluster 0,gpu 0       ;
+ red.relaxed.cluster.shared::cluster.add x, 1 | barrier.cluster.arrive.release ;
+ barrier.cluster.arrive.release               | barrier.cluster.wait.acquire   ;
+ barrier.cluster.wait.acquire                 | ld.weak.shared::cta r0, x      ;
+exists
+(P1:r0 == 0)

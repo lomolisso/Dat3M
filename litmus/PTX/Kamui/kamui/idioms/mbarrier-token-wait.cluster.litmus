@@ -1,0 +1,14 @@
+PTX mbarrier-token-wait.cluster
+{
+x=0 @cta 1;
+b=mbarrier(2) @cta 1;
+P1:r6=0;
+P1:r0=0;
+P1:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0                          | P1@cta 1,cluster 0,gpu 0                    ;
+ st.weak.shared::cluster x, 1                      | mbarrier.arrive.release.cluster r6, b       ;
+ mbarrier.arrive.release.cluster.shared::cluster b | mbarrier.try_wait.acquire.cluster r0, b, r6 ;
+                                                   | ld.weak.shared::cta r1, x                   ;
+exists
+(P1:r0 == 1 /\ P1:r1 == 0)

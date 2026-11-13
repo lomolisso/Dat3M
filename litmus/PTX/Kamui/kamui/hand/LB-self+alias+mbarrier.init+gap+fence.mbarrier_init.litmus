@@ -1,0 +1,17 @@
+PTX LB-self+alias+mbarrier.init+gap+fence.mbarrier_init
+{
+x=0 @cta 0;
+y @ generic aliases x;
+z=0;
+m=mbarrier() @cta 0;
+P0:r0=0;
+P0:r1=0;
+}
+ P0@cta 0,cluster 0,gpu 0             ;
+ ld.acquire.cluster.shared::cta r0, y ;
+ mbarrier.init.shared::cta m, 1       ;
+ ld.weak.global r1, z                 ;
+ fence.mbarrier_init.release.cluster  ;
+ st.relaxed.cluster.shared::cta x, 1  ;
+exists
+(P0:r0 == 1)
