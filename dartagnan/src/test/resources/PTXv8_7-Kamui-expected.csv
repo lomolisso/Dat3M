@@ -1674,6 +1674,15 @@ litmus/PTX/Kamui/kamui/hand/tearing+vector.v2.u64.litmus,0
 litmus/PTX/Kamui/kamui/hand/tearing+vector.v4.u64.litmus,1
 litmus/PTX/Kamui/kamui/hand/tensormap+fence.release+acquire-fence.litmus,1
 litmus/PTX/Kamui/kamui/hand/tensormap+release-fences-only.litmus,1
+litmus/PTX/Kamui/kamui/hand/2+2W+vector.v2.u64.litmus,0
+litmus/PTX/Kamui/kamui/hand/CoRW-self+alias+surface.litmus,0
+litmus/PTX/Kamui/kamui/hand/LB-self+alias+acquire+weak-store.litmus,1
+litmus/PTX/Kamui/kamui/hand/LB-self+alias+fence.release+fence.sc.litmus,0
+litmus/PTX/Kamui/kamui/hand/LB-self+alias+fence.sc.litmus,0
+litmus/PTX/Kamui/kamui/hand/LB-self+alias+fence.sc+weak-store.litmus,1
+litmus/PTX/Kamui/kamui/hand/LB-self+alias+weak-load+acquire.litmus,1
+litmus/PTX/Kamui/kamui/hand/LB-self+alias+weak-load+fence.sc.litmus,1
+litmus/PTX/Kamui/kamui/hand/MP-self+texture-after-generic-read.litmus,1
 litmus/PTX/Kamui/kamui/idioms/cpasync-mbarrier+wgmma.litmus,0
 litmus/PTX/Kamui/kamui/idioms/cta-init+tma.litmus,0
 litmus/PTX/Kamui/kamui/idioms/cub-lookback-packed.litmus,0

@@ -1,0 +1,13 @@
+PTX LB-self+alias+fence.release+fence.sc
+{
+x=0;
+y @ generic aliases x;
+P0:r0=0;
+}
+ P0@cta 0,gpu 0         ;
+ ld.relaxed.cta r0, x  ;
+ fence.release.cta     ;
+ fence.sc.sys          ;
+ st.release.cta y, 1   ;
+exists
+(P0:r0 == 1)

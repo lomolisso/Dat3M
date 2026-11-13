@@ -1,0 +1,12 @@
+PTX MP-self+texture-after-generic-read
+{
+y=0;
+P0:r0=0;
+P0:r1=0;
+}
+ P0@cta 0,gpu 0       ;
+ st.relaxed.cta y, 1 ;
+ ld.weak r0, y       ;
+ tld.weak r1, y      ;
+exists
+(P0:r0 == 1 /\ P0:r1 == 0)

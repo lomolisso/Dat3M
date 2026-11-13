@@ -1,0 +1,15 @@
+PTX CoRW-self+alias+surface
+{
+x=0;
+y @ generic aliases x;
+z @ generic aliases x;
+P0:r0=0;
+P0:r1=0;
+}
+ P0@cta 0,gpu 0       ;
+ suld.weak r0, z     ;
+ ld.weak r1, y       ;
+ st.weak z, 1        ;
+ sust.weak y, 2      ;
+exists
+(P0:r0 == 2 /\ P0:r1 == 1)

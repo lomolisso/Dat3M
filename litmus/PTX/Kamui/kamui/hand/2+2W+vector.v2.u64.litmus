@@ -1,0 +1,9 @@
+PTX 2+2W+vector.v2.u64
+{
+a=0;
+b=0;
+}
+ P0@cta 0,gpu 0                      | P1@cta 1,gpu 0                      ;
+ st.relaxed.gpu.v2.u64 a, b, 1, 1    | st.relaxed.gpu.v2.u64 a, b, 2, 2    ;
+exists
+(a == 1 /\ b == 2)

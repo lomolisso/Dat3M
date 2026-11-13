@@ -1,0 +1,15 @@
+PTX LB-self+alias+weak-load+acquire
+{
+x=0;
+y @ generic aliases x;
+z @ generic aliases x;
+P0:r0=0;
+P0:r1=0;
+}
+ P0@cta 0,gpu 0              ;
+ ld.weak r0, y               ;
+ st.release.gpu y, 1         ;
+ ld.acquire.gpu r1, y        ;
+ st.release.gpu z, 2         ;
+exists
+(P0:r0 == 2 /\ P0:r1 == 1 /\ x == 1)
