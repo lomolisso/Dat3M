@@ -45,8 +45,9 @@ empty (((atomic-pair & fr); [range(rmw)]; (atomic-pair & co)) & rmw) as axiom-Mi
 let dep = addr | data | ctrl
 acyclic (rf | dep) as axiom-NoThinAir
 
-(* 8.10.5 Sequential consistency per location, for morally strong operations (M7) *)
-acyclic (morally-strong & (po | rf | co | fr) & vloc) as axiom-ScPerLocation
+(* 8.10.5 Sequential consistency per location: program order between operations on one virtual address and
+   morally strong communication (M7, M65) *)
+acyclic ((po & vloc) | (morally-strong & (rf | co | fr))) as axiom-ScPerLocation
 
 (* 8.10.6 Causality *)
 irreflexive ((rf | fr); cause) as axiom-Causality

@@ -145,7 +145,7 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
   overlapping operations and morally strong relations in communication order cannot result in a cycle."
 - **Alternatives.** (a) forbid cycles whose consecutive edges are morally strong (as the PTX 6.0 model); (b) also
   require every pair on the cycle to be morally strong.
-- **Choice.** (a): the second half of the sentence states the axiom edge by edge ("morally strong relations in
+- **Choice.** Replaced by M65 (2026-11-12). (a): the second half of the sentence states the axiom edge by edge ("morally strong relations in
   communication order"). (a) is stronger than (b) only for cycles with operations at different scopes; no test in
   the corpus distinguishes them.
 - **Tests.** No test in the corpus changes verdict with (b), nor without the axiom at all (the PTX 7.5 model has
@@ -1046,6 +1046,18 @@ flagged, the test is allowed (M35, M51); otherwise, if `mixed-size-data-race` is
 - **Choice.** Decided on 2026-11-11 (D46): a generic operation of a prerequisite grid is ordered before every later
   memory operation of the waiting thread, whatever its proxy (M49).
 - **Tests.** `Kamui/kamui/idioms/pdl-wait+tma-load` (forbidden).
+
+### M65. Sequential consistency per location over program order and morally strong communication
+
+- **Question.** Since M61, two operations on aliases of one location can be morally strong. M7 required every edge
+  of a cycle to be morally strong and on one virtual address, so a cycle through a generic and a surface access of
+  aliases was not forbidden.
+- **Manual.** 7179-7183 (quoted in M7): "a concatenation of program order between overlapping operations and
+  morally strong relations in communication order cannot result in a cycle".
+- **Choice.** Decided on 2026-11-12, the stronger reading, as the PTX 6.0 model and the Alloy model of the PTX 8.7
+  memory model: program order between operations on one virtual address (not required to be morally strong) and
+  morally strong `rf`, `co` and `fr` (on the memory, so across aliases). This replaces the choice of M7.
+- **Tests.** `Kamui/kamui/hand/CoRW-self+alias+surface` (forbidden; allowed with M7).
 
 ## Tests Dartagnan cannot decide
 
